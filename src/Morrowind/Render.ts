@@ -5,14 +5,14 @@ import { White, colorCopy, colorFromRGBA8, colorLerp, colorNewCopy } from "../Co
 import * as DDS from "../DarkSouls/dds.js";
 import { NamedArrayBufferSlice } from "../DataFetcher.js";
 import { AABB, Frustum } from "../Geometry.js";
-import { getMatrixTranslation, invlerp, setMatrixTranslation } from "../MathHelpers.js";
+import { getMatrixTranslation, invlerp } from "../MathHelpers.js";
 import { DeviceProgram } from "../Program.js";
 import { SceneContext } from "../SceneBase.js";
 import { TextureMapping } from "../TextureHolder.js";
 import { makeStaticDataBuffer } from "../gfx/helpers/BufferHelpers.js";
-import { makeAttachmentClearDescriptor, makeBackbufferDescSimple, standardFullClearRenderPassDescriptor } from "../gfx/helpers/RenderGraphHelpers.js";
+import { makeAttachmentClearDescriptor, makeBackbufferDescSimple } from "../gfx/helpers/RenderGraphHelpers.js";
 import { fillColor, fillMatrix4x3, fillMatrix4x4, fillVec3v } from "../gfx/helpers/UniformBufferHelpers.js";
-import { GfxBindingLayoutDescriptor, GfxBuffer, GfxBufferUsage, GfxClipSpaceNearZ, GfxCullMode, GfxDevice, GfxFormat, GfxFrontFaceMode, GfxIndexBufferDescriptor, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxMipFilterMode, GfxProgram, GfxSamplerFormatKind, GfxTexFilterMode, GfxTexture, GfxTextureDimension, GfxTextureUsage, GfxVertexAttributeDescriptor, GfxVertexBufferDescriptor, GfxVertexBufferFrequency, GfxWrapMode, makeTextureDescriptor2D } from "../gfx/platform/GfxPlatform.js";
+import { GfxBindingLayoutDescriptor, GfxBuffer, GfxBufferUsage, GfxClipSpaceNearZ, GfxCullMode, GfxDevice, GfxFormat, GfxIndexBufferDescriptor, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxMipFilterMode, GfxProgram, GfxSamplerFormatKind, GfxTexFilterMode, GfxTexture, GfxTextureDimension, GfxTextureUsage, GfxVertexAttributeDescriptor, GfxVertexBufferDescriptor, GfxVertexBufferFrequency, GfxWrapMode, makeTextureDescriptor2D } from "../gfx/platform/GfxPlatform.js";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache.js";
 import { GfxrAttachmentSlot } from "../gfx/render/GfxRenderGraph.js";
 import { GfxRenderHelper } from "../gfx/render/GfxRenderHelper.js";
@@ -244,8 +244,8 @@ class CellTerrain {
         const vertexSizeInFloats = 7; // height, normal, color
         const vertexData = new Float32Array(vertexCount * vertexSizeInFloats);
 
-        this.aabb.minX = this.aabb.minY = -4096;
-        this.aabb.maxX = this.aabb.maxY = 4096;
+        this.aabb.min[0] = this.aabb.min[1] = -4096;
+        this.aabb.max[0] = this.aabb.max[1] = 4096;
 
         let rowStart = land.heightOffset;
         for (let y = 0; y < land.sideLen; y++) {
@@ -258,8 +258,8 @@ class CellTerrain {
 
                 vertexData[idx*7 + 0] = height;
 
-                this.aabb.minZ = Math.min(this.aabb.minZ, height);
-                this.aabb.maxZ = Math.max(this.aabb.maxZ, height);
+                this.aabb.min[2] = Math.min(this.aabb.min[2], height);
+                this.aabb.max[2] = Math.max(this.aabb.max[2], height);
 
                 let nx = 0, ny = 0, nz = 1;
                 if (land.heightNormalData !== null) {
@@ -355,7 +355,7 @@ class StaticModel {
             return;
 
         // Gather all visible instances.
-        const template = renderInstManager.getTemplateRenderInst();
+        const template = renderInstManager.getCurrentTemplate();
         const uniformBuffer = template.getUniformBuffer();
         const maxInstances = this.nifData.getMaxInstances();
         const triShapes = this.nifData.getTriShapes();
@@ -376,7 +376,7 @@ class StaticModel {
         const submitDrawInstanced = () => {
             if (numInstances === 0)
                 return;
-            renderInstManager.setCurrentRenderInstList(globals.view.renderInstListOpa);
+            renderInstManager.setCurrentList(globals.view.renderInstListOpa);
             template.setBindingLayouts(bindingLayoutsNifInstanced);
             template.setUniformBufferOffset(2, baseOffs, maxInstances * 16);
             template.setInstanceCount(numInstances);
@@ -395,7 +395,7 @@ class StaticModel {
             if (!isInRangeXY(x, y, globals.view.cameraPos, globals.view.nifCullFarXluSq))
                 return;
 
-            renderInstManager.setCurrentRenderInstList(globals.view.renderInstListXlu);
+            renderInstManager.setCurrentList(globals.view.renderInstListXlu);
             template.setBindingLayouts(bindingLayoutsNifSingle);
             template.setInstanceCount(1);
             for (let i = 0; i < triShapes.length; i++) {
@@ -496,7 +496,7 @@ class CellData {
 const bindingLayoutsTerrain: GfxBindingLayoutDescriptor[] = [
     { numUniformBuffers: 2, numSamplers: 2, samplerEntries: [
         { dimension: GfxTextureDimension.n2DArray, formatKind: GfxSamplerFormatKind.Float, },
-        { dimension: GfxTextureDimension.n2D, formatKind: GfxSamplerFormatKind.Float, }, // TODO(jstpierre): Integer texture for the map lookup?
+        { dimension: GfxTextureDimension.n2D, formatKind: GfxSamplerFormatKind.UnfilterableFloat, }, // TODO(jstpierre): Integer texture for the map lookup?
     ] },
 ];
 
@@ -652,7 +652,7 @@ class WorldManager {
     }
 
     private prepareToRenderTerrain(globals: Globals, renderInstManager: GfxRenderInstManager): void {
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.setGfxProgram(this.terrainProgram);
         template.setMegaStateFlags({ cullMode: GfxCullMode.Back });
 
@@ -689,7 +689,7 @@ class WorldManager {
 
             renderInstManager.submitRenderInst(renderInst);
         }
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     private prepareToRenderStatic(globals: Globals, renderInstManager: GfxRenderInstManager): void {
@@ -727,7 +727,7 @@ class SkyManager {
             colorCopy(v.emissiveColor, globals.weatherManager.current.skyColor);
         });
 
-        renderInstManager.setCurrentRenderInstList(globals.view.renderInstListSky);
+        renderInstManager.setCurrentList(globals.view.renderInstListSky);
 
         mat4.fromTranslation(scratchMatrix, globals.view.cameraPos);
 
@@ -1003,10 +1003,10 @@ export class MorrowindRenderer implements SceneGfx {
         const renderInstManager = this.renderHelper.renderInstManager;
         this.skyManager.prepareToRender(globals, renderInstManager);
 
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(globals.view.renderInstListOpa);
+        this.renderHelper.renderInstManager.setCurrentList(globals.view.renderInstListOpa);
         this.worldManager.prepareToRender(globals, renderInstManager);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
     }
 

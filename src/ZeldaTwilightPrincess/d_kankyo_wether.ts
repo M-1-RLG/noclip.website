@@ -10,13 +10,13 @@ import { MathConstants, computeMatrixWithoutTranslation, invlerp, saturate } fro
 import { DeviceProgram } from "../Program.js";
 import { TDDraw } from "../SuperMarioGalaxy/DDraw.js";
 import { TextureMapping } from "../TextureHolder.js";
-import { cLib_addCalc, cM__Short2Rad, cM_rndF, cM_rndFX } from "../ZeldaWindWaker/SComponent.js";
+import { cLib_addCalc, cM_s2rad, cM_rndF, cM_rndFX } from "../ZeldaWindWaker/SComponent.js";
 import { PeekZManager, PeekZResult } from "../ZeldaWindWaker/d_dlst_peekZ.js";
 import { mDoLib_project, mDoLib_projectFB } from "../ZeldaWindWaker/m_do_ext.js";
 import { MtxTrans, calc_mtx, mDoMtx_XrotM, mDoMtx_ZrotM } from "../ZeldaWindWaker/m_do_mtx.js";
 import { fullscreenMegaState, setAttachmentStateSimple } from "../gfx/helpers/GfxMegaStateDescriptorHelpers.js";
 import { GfxShaderLibrary } from "../gfx/helpers/GfxShaderLibrary.js";
-import { compareDepthValues } from "../gfx/helpers/ReversedDepthHelpers.js";
+import { compareDepthValues, reverseDepthForClearValue } from "../gfx/helpers/ReversedDepthHelpers.js";
 import { fillColor, fillVec4 } from "../gfx/helpers/UniformBufferHelpers.js";
 import { GfxBindingLayoutDescriptor, GfxBlendFactor, GfxBlendMode, GfxClipSpaceNearZ, GfxCompareMode, GfxDevice, GfxFormat, GfxMipFilterMode, GfxTexFilterMode, GfxWrapMode } from "../gfx/platform/GfxPlatform.js";
 import { GfxProgram } from "../gfx/platform/GfxPlatformImpl.js";
@@ -31,9 +31,10 @@ import { ViewerRenderInput } from "../viewer.js";
 import { dKy_actor_addcol_amb_set, dKy_addcol_fog_set, dKy_bg1_addcol_amb_set, dKy_bg_addcol_amb_set, dKy_darkworld_check, dKy_daynight_check, dKy_efplight_cut, dKy_efplight_set, dKy_get_dayofweek, dKy_set_actcol_ratio, dKy_set_bgcol_ratio, dKy_set_fogcol_ratio, dKy_set_vrboxcol_ratio, dKy_undwater_filter_draw, dKy_vrbox_addcol_kasumi_set, dKy_vrbox_addcol_sky0_set, dScnKy_env_light_c } from "./d_kankyo.js";
 import { ResType } from "./d_resorce.js";
 import { dStage_FileList_dt_c, dStage_stagInfo_GetArg0, dStage_stagInfo_GetSTType } from "./d_stage.js";
-import { cPhs__Status, fGlobals, fopKyM_Delete, fopKyM_create, fpcPf__Register, fpc__ProcessName, fpc_bs__Constructor, kankyo_class } from "./framework.js";
 import { mDoExt_brkAnm, mDoExt_modelUpdateDL } from "./m_do_ext.js";
 import { dGlobals } from "./Main.js";
+import { cPhs__Status, fGlobals, fopKyM_create, fopKyM_Delete, fpc_bs__Constructor, fpcPf__Register, kankyo_class } from "../ZeldaWindWaker/framework.js";
+import { dProcName_e } from "./d_a.js";
 
 export function dKyw_wether_init(globals: dGlobals): void {
     const envLight = globals.g_env_light;
@@ -183,7 +184,7 @@ function dKyr_thunder_move(globals: dGlobals, envLight: dScnKy_env_light_c, came
 
         if (cM_rndF(1.0) < 0.18) {
             // Spawn lighting bolt
-            fopKyM_create(globals.frameworkGlobals, fpc__ProcessName.d_thunder, -1, null, null);
+            fopKyM_create(globals.frameworkGlobals, dProcName_e.d_thunder, -1, null, null);
         }
     } else if (envLight.thunderState === ThunderState.FadeNear || envLight.thunderState === ThunderState.FadeFar) {
         envLight.thunderFlashTimer = cLib_addCalc(envLight.thunderFlashTimer, 0.0, 0.1, 0.05, 0.001);
@@ -260,12 +261,12 @@ export function loadRawTexture(globals: dGlobals, data: ArrayBufferSlice, width:
 const materialParams = new MaterialParams();
 const drawParams = new DrawParams();
 
-function submitScratchRenderInst(renderInstManager: GfxRenderInstManager, materialHelper: GXMaterialHelperGfx, renderInst: GfxRenderInst, viewerInput: ViewerRenderInput, materialParams_ = materialParams, drawParams_ = drawParams): void {
+function submitScratchRenderInst(renderInstManager: GfxRenderInstManager, materialHelper: GXMaterialHelperGfx, renderInst: GfxRenderInst, viewerInput: ViewerRenderInput): void {
     materialHelper.setOnRenderInst(renderInstManager.gfxRenderCache, renderInst);
-    renderInst.setSamplerBindingsFromTextureMappings(materialParams_.m_TextureMapping);
-    materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams_);
-    mat4.copy(drawParams_.u_PosMtx[0], viewerInput.camera.viewMatrix);
-    materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams_);
+    renderInst.setSamplerBindingsFromTextureMappings(materialParams.m_TextureMapping);
+    materialHelper.allocateMaterialParamsDataOnInst(renderInst, materialParams);
+    mat4.copy(drawParams.u_PosMtx[0], viewerInput.camera.viewMatrix);
+    materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams);
     renderInstManager.submitRenderInst(renderInst);
 }
 
@@ -442,7 +443,9 @@ export class dKankyo_sun_Packet {
 
         const camPitch = vecPitch(globals.cameraFwd);
 
-        renderInstManager.setCurrentRenderInstList(globals.dlst.sky[1]);
+        renderInstManager.setCurrentList(globals.dlst.sky[1]);
+
+        materialParams.clear();
 
         if (drawMoon) {
             let dayOfWeek = dKy_get_dayofweek(envLight);
@@ -520,9 +523,9 @@ export class dKankyo_sun_Packet {
 
     private lensflareBaseSize: number = 160.0;
     private lensflareCount: number = 16.0;
-    private lensflareAngleSteps: number[] = [cM__Short2Rad(0x1000), cM__Short2Rad(0x1C71)];
+    private lensflareAngleSteps: number[] = [cM_s2rad(0x1000), cM_s2rad(0x1C71)];
     private lensflareSizes: number[] = [0.1, 1.1, 0.2, 0.4];
-    private lensflareWidth: number = cM__Short2Rad(1000.0);
+    private lensflareWidth: number = cM_s2rad(1000.0);
 
     private drawLenzflare(globals: dGlobals, ddraw: TDDraw, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
         if (this.visibility <= 0.1)
@@ -531,9 +534,11 @@ export class dKankyo_sun_Packet {
         computeMatrixWithoutTranslation(scratchMatrix, viewerInput.camera.worldMatrix);
 
         if (this.drawLenzInSky)
-            renderInstManager.setCurrentRenderInstList(globals.dlst.sky[1]);
+            renderInstManager.setCurrentList(globals.dlst.sky[1]);
         else
-            renderInstManager.setCurrentRenderInstList(globals.dlst.wetherEffect);
+            renderInstManager.setCurrentList(globals.dlst.wetherEffect);
+
+        materialParams.clear();
 
         const invDist = 1.0 - this.distFalloff;
         const flareViz = (0.6 + (0.4 * this.visibility * invDist ** 2));
@@ -607,8 +612,8 @@ export class dKankyo_sun_Packet {
             submitScratchRenderInst(renderInstManager, materialHelper, renderInst, viewerInput);
         }
 
-        let angle0 = cM__Short2Rad(globals.counter *  0x00 - 0x07F6);
-        let angle1 = cM__Short2Rad(globals.counter * -0x0E + 0x416B);
+        let angle0 = cM_s2rad(globals.counter *  0x00 - 0x07F6);
+        let angle1 = cM_s2rad(globals.counter * -0x0E + 0x416B);
         for (let i = 0; i < this.lensflareCount; i++) {
             ddraw.begin(GX.Command.DRAW_TRIANGLES);
 
@@ -748,12 +753,14 @@ export class dKankyo_vrkumo_Packet {
         const domeRadius = /* globals.dStage_dt.stag.farPlane -  */10000.0;
         const ddraw = this.ddraw;
 
-        renderInstManager.setCurrentRenderInstList(globals.dlst.sky[1]);
+        renderInstManager.setCurrentList(globals.dlst.sky[1]);
 
         ddraw.beginDraw(globals.modelCache.cache);
         ddraw.allocPrimitives(GX.Command.DRAW_QUADS, 4*3*100);
 
         colorFromRGBA(materialParams.u_Color[ColorKind.C1], 0, 0, 0, 0);
+
+        materialParams.clear();
 
         for (let textureIdx = 2; textureIdx >= 0; textureIdx--) {
             this.textures[textureIdx].fillTextureMapping(materialParams.m_TextureMapping[0]);
@@ -979,7 +986,9 @@ export class dKankyo_housi_Packet {
         const ddraw = this.ddraw;
         computeMatrixWithoutTranslation(scratchMatrix, viewerInput.camera.worldMatrix);
 
-        renderInstManager.setCurrentRenderInstList(globals.dlst.wetherEffect);
+        renderInstManager.setCurrentList(globals.dlst.wetherEffect);
+
+        materialParams.clear();
 
         ddraw.beginDraw(globals.modelCache.cache);
         ddraw.begin(GX.Command.DRAW_QUADS, 4 * this.count);
@@ -1109,7 +1118,7 @@ export class dKankyo_rain_Packet {
 
         computeMatrixWithoutTranslation(scratchMatrix, viewerInput.camera.worldMatrix);
 
-        renderInstManager.setCurrentRenderInstList(globals.dlst.wetherEffect);
+        renderInstManager.setCurrentList(globals.dlst.wetherEffect);
 
         colorFromRGBA8(materialParams.u_Color[ColorKind.C1], 0x8080800A);
         // envLight.wetherCommonTextures.snowTexture.fillTextureMapping(materialParams.m_TextureMapping[0]);
@@ -1206,8 +1215,10 @@ export class dKankyo_rain_Packet {
         if (finalAlpha <= 0.001)
             return;
 
+        materialParams.clear();
+
         const ddraw = this.ddraw;
-        renderInstManager.setCurrentRenderInstList(globals.dlst.wetherEffect);
+        renderInstManager.setCurrentList(globals.dlst.wetherEffect);
 
         colorFromRGBA8(materialParams.u_Color[ColorKind.C0], 0xB4C8C800);
         materialParams.u_Color[ColorKind.C0].a = finalAlpha;
@@ -1346,9 +1357,11 @@ export class dKankyo_star_Packet {
         const ddraw = this.ddraw;
 
         if (this.renderInMain)
-            renderInstManager.setCurrentRenderInstList(globals.dlst.bg[1]);
+            renderInstManager.setCurrentList(globals.dlst.bg[1]);
         else
-            renderInstManager.setCurrentRenderInstList(globals.dlst.sky[1]);
+            renderInstManager.setCurrentList(globals.dlst.sky[1]);
+
+        materialParams.clear();
 
         ddraw.beginDraw(globals.modelCache.cache);
         ddraw.begin(GX.Command.DRAW_TRIANGLES, 6 * envLight.starCount);
@@ -1393,7 +1406,7 @@ export class dKankyo_star_Packet {
                 scratchVec3a[2] = radiusXZ * 300.0 * Math.cos(angle);
 
                 angle += angleIncr;
-                angleIncr += cM__Short2Rad(0x09C4);
+                angleIncr += cM_s2rad(0x09C4);
 
                 radius += (1.0 + 3.0 * (radius / 200.0 ** 3.0));
                 if (radius > 200.0)
@@ -1481,18 +1494,8 @@ function dKyr_sun_move__PeekZ(dst: PeekZResult, peekZ: PeekZManager, v: Readonly
     if (dst.value === null)
         return SunPeekZResult.Obscured;
 
-    // Test if the depth buffer is less than our projected Z coordinate.
-    // Depth buffer readback should result in 0.0 for the near plane, and 1.0 for the far plane.
-    // Put projected coordinate in 0-1 normalized space.
-    let projectedZ = v[2];
-
-    if (clipSpaceNearZ === GfxClipSpaceNearZ.NegativeOne)
-        projectedZ = projectedZ * 0.5 + 0.5;
-
-    // Point is visible if our projected Z is in front of the depth buffer.
-    const visible = compareDepthValues(projectedZ, dst.value, GfxCompareMode.Less);
-
-    return visible ? SunPeekZResult.Visible : SunPeekZResult.Obscured;
+    const obscured = compareDepthValues(dst.value, reverseDepthForClearValue(1.0), GfxCompareMode.Less);
+    return obscured ? SunPeekZResult.Obscured : SunPeekZResult.Visible;
 }
 
 function dKyr_sun_move(globals: dGlobals, deltaTimeFrames: number): void {
@@ -2086,7 +2089,7 @@ function wether_move_vrkumo(globals: dGlobals, deltaTimeFrames: number): void {
         windPower = 0.3;
 
     const windDir = dKyw_get_wind_vec(envLight);
-    const windPitch = vecPitch(windDir), windAngle = vecAngle(windDir) + cM__Short2Rad(24575.0);
+    const windPitch = vecPitch(windDir), windAngle = vecAngle(windDir) + cM_s2rad(24575.0);
     const cosPitch = Math.cos(windPitch);
     const sinAngle = Math.sin(windAngle), cosAngle = Math.cos(windAngle);
     pkt.cloudScrollX = (pkt.cloudScrollX + cosPitch * sinAngle * windPower * 0.0014 * deltaTimeFrames) % 1.0;
@@ -2125,11 +2128,11 @@ export function dKyw_wind_set(globals: dGlobals): void {
 
     let windAngleXZ = 0, windAngleY = 0;
     if (windDirFlag === 2)
-        windAngleXZ = cM__Short2Rad(-0x4000);
+        windAngleXZ = cM_s2rad(-0x4000);
     else if (windDirFlag === 4)
-        windAngleXZ = cM__Short2Rad(0x4000);
+        windAngleXZ = cM_s2rad(0x4000);
     else if (windDirFlag === 5)
-        windAngleXZ = cM__Short2Rad(0x7FFF);
+        windAngleXZ = cM_s2rad(0x7FFF);
 
     const targetWindVecX = Math.sin(windAngleXZ) * Math.cos(windAngleY);
     const targetWindVecY = Math.sin(windAngleY);
@@ -2176,7 +2179,7 @@ export function dKyw_get_AllWind_vecpow(dst: vec3, envLight: dScnKy_env_light_c,
 }
 
 export class d_thunder extends kankyo_class {
-    public static PROCESS_NAME = fpc__ProcessName.d_thunder;
+    public static PROCESS_NAME = dProcName_e.d_thunder;
     private model: J3DModelInstance;
     private brkAnm = new mDoExt_brkAnm();
     private rotation: number = 0.0;
@@ -2479,7 +2482,7 @@ export class mDoGph_bloom_c {
 }
 
 interface constructor extends fpc_bs__Constructor {
-    PROCESS_NAME: fpc__ProcessName;
+    PROCESS_NAME: dProcName_e;
 }
 
 export function dKyw__RegisterConstructors(globals: fGlobals): void {

@@ -1120,7 +1120,7 @@ class HSD_DObj_Instance {
         if (!this.visible)
             return;
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         this.mobj.setOnRenderInst(device, renderInstManager.gfxRenderCache, template);
 
         for (let i = 0; i < this.data.dobj.pobj.length; i++) {
@@ -1185,14 +1185,14 @@ class HSD_DObj_Instance {
             else if (cullMode === HSD_PObjFlags.CULLBACK)
                 megaStateFlags.cullMode = GfxCullMode.Back;
             else
-                megaStateFlags.cullMode = GfxCullMode.FrontAndBack;
+                throw "whoops";
 
             shapeHelper.setOnRenderInst(renderInst);
             this.mobj.materialHelper.allocateDrawParamsDataOnInst(renderInst, drawParams);
             renderInstManager.submitRenderInst(renderInst);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 }
 

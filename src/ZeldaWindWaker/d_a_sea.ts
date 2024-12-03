@@ -6,7 +6,6 @@ import { MathConstants, computeModelMatrixSRT, computeModelMatrixS, invlerp, ler
 import { dGlobals } from "./Main.js";
 import { nArray, assert } from "../util.js";
 import { vec2, vec3, mat4, ReadonlyVec3, ReadonlyVec2 } from "gl-matrix";
-import { fopAc_ac_c, fpc__ProcessName, cPhs__Status } from "./framework.js";
 import { ResType } from "./d_resorce.js";
 import { GfxRenderInstManager } from "../gfx/render/GfxRenderInstManager.js";
 import { ViewerRenderInput } from "../viewer.js";
@@ -17,8 +16,11 @@ import { dKy_get_seacolor, dKy_GxFog_sea_set } from './d_kankyo.js';
 import { colorLerp, OpaqueBlack } from '../Color.js';
 import { dKy_usonami_set } from './d_kankyo_wether.js';
 import { Plane } from '../Geometry.js';
-import { cLib_addCalcAngleS2, cM_atan2s, cM_rndF, cM__Short2Rad } from './SComponent.js';
+import { cLib_addCalcAngleS2, cM_atan2s, cM_rndF, cM_s2rad } from './SComponent.js';
 import { dStage_stagInfo_GetSTType } from './d_stage.js';
+import { fopAc_ac_c } from './f_op_actor.js';
+import { dProcName_e } from './d_procname.js';
+import { cPhs__Status } from './framework.js';
 
 const scratchVec2a = vec2.create();
 const scratchVec2b = vec2.create();
@@ -188,7 +190,7 @@ const materialParams = new MaterialParams();
 const drawParams = new DrawParams();
 
 export class d_a_sea extends fopAc_ac_c {
-    public static PROCESS_NAME = fpc__ProcessName.d_a_sea;
+    public static PROCESS_NAME = dProcName_e.d_a_sea;
     private texSeaBTI: BTIData;
     private texWyurayura: BTIData;
     private waveInfo: daSea_WaveInfo;
@@ -428,7 +430,7 @@ export class d_a_sea extends fopAc_ac_c {
     }
 
     public override draw(globals: dGlobals, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
-        renderInstManager.setCurrentRenderInstList(globals.dlst.sea);
+        renderInstManager.setCurrentList(globals.dlst.sea);
 
         this.ddraw.beginDraw(globals.modelCache.cache);
 
@@ -741,6 +743,6 @@ export function dLib_waveRot(globals: dGlobals, wave: dLib_wave_c, pos: Readonly
     wave.animX += 400 * deltaTimeFrames;
     wave.animZ += 430 * deltaTimeFrames;
     const swayAmountFull = 130.0 + swayAmount;
-    wave.rotX = wave.angleX + swayAmountFull * Math.sin(cM__Short2Rad(wave.animX));
-    wave.rotZ = wave.angleZ + swayAmountFull * Math.cos(cM__Short2Rad(wave.animZ));
+    wave.rotX = wave.angleX + swayAmountFull * Math.sin(cM_s2rad(wave.animX));
+    wave.rotZ = wave.angleZ + swayAmountFull * Math.cos(cM_s2rad(wave.animZ));
 }

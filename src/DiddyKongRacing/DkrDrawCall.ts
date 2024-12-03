@@ -3,19 +3,17 @@ import { ReadonlyMat4, mat4 } from 'gl-matrix';
 import { computeViewMatrix } from '../Camera.js';
 import { makeStaticDataBuffer } from '../gfx/helpers/BufferHelpers.js';
 import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers.js';
-import { fillMatrix4x3, fillMatrix4x4 } from '../gfx/helpers/UniformBufferHelpers.js';
-import { GfxBlendFactor, GfxBlendMode, GfxBuffer, GfxBufferUsage, GfxCullMode, GfxDevice, GfxFormat, GfxIndexBufferDescriptor, GfxInputLayout, GfxInputLayoutBufferDescriptor, GfxProgram, GfxVertexAttributeDescriptor, GfxVertexBufferDescriptor, GfxVertexBufferFrequency } from '../gfx/platform/GfxPlatform.js';
+import { fillMatrix4x3 } from '../gfx/helpers/UniformBufferHelpers.js';
+import { GfxBlendFactor, GfxBlendMode, GfxBuffer, GfxBufferUsage, GfxCullMode, GfxDevice, GfxFormat, GfxInputLayout, GfxProgram, GfxVertexBufferDescriptor, GfxVertexBufferFrequency } from '../gfx/platform/GfxPlatform.js';
+import { GfxRenderCache } from '../gfx/render/GfxRenderCache.js';
+import { GfxRenderInstManager, GfxRendererLayer, makeSortKey, setSortKeyDepth } from '../gfx/render/GfxRenderInstManager.js';
 import { assert } from '../util.js';
 import { ViewerRenderInput } from '../viewer.js';
 import { DkrControlGlobals } from './DkrControlGlobals.js';
+import { DkrObjectAnimation } from './DkrObjectAnimation.js';
 import { DkrTexture } from './DkrTexture.js';
 import { DkrFinalVertex, DkrTriangleBatch } from './DkrTriangleBatch.js';
 import { F3DDKR_Program } from './F3DDKR_Program.js';
-import { DkrObjectAnimation } from './DkrObjectAnimation.js';
-import { GfxRenderInstManager, makeSortKey, GfxRendererLayer, setSortKeyDepth } from '../gfx/render/GfxRenderInstManager.js';
-import { GfxRenderCache } from '../gfx/render/GfxRenderCache.js';
-import { makeTriangleIndexBuffer } from '../gfx/helpers/TopologyHelpers.js';
-import { GfxTopology } from '../gfx/helpers/TopologyHelpers.js';
 
 // Currently known flags
 const FLAG_ENABLE_DEPTH_WRITE    = 0x00000010;
@@ -46,12 +44,9 @@ export class DkrDrawCall {
     private vertices: DkrFinalVertex[] = [];
     private positionBuffer: GfxBuffer;
     private attribBuffer: GfxBuffer;
-    private indexBuffer: GfxBuffer;
-    private indexCount: number;
 
     private inputLayout: GfxInputLayout;
     private vertexBufferDescriptors: GfxVertexBufferDescriptor[];
-    private indexBufferDescriptor: GfxIndexBufferDescriptor;
     private objAnimPositionBufferByteOffset: number[][] = [];
     private gfxProgram: GfxProgram | null = null;
     private program: F3DDKR_Program;
@@ -76,10 +71,6 @@ export class DkrDrawCall {
 
     public build(cache: GfxRenderCache, animations: DkrObjectAnimation[] | null = null): void {
         assert(!this.isBuilt);
-
-        const indexData = makeTriangleIndexBuffer(GfxTopology.Triangles, 0, this.vertices.length);
-        this.indexCount = indexData.length;
-        this.indexBuffer = makeStaticDataBuffer(cache.device, GfxBufferUsage.Index, indexData.buffer);
 
         const attribBuffer = new Float32Array(this.vertices.length * 6);
         for(let i = 0; i < this.vertices.length; i++) {
@@ -142,7 +133,7 @@ export class DkrDrawCall {
             { byteStride: 6 * 0x04, frequency: GfxVertexBufferFrequency.PerVertex, }, // RGBA UV
         ];
         this.inputLayout = cache.createInputLayout({
-            indexBufferFormat: GfxFormat.U16_R,
+            indexBufferFormat: null,
             vertexAttributeDescriptors,
             vertexBufferDescriptors,
         });
@@ -154,13 +145,11 @@ export class DkrDrawCall {
             { buffer: this.positionBuffer, byteOffset: 0 },
             { buffer: this.attribBuffer, byteOffset: 0 },
         ];
-        this.indexBufferDescriptor = { buffer: this.indexBuffer, byteOffset: 0 };
         this.isBuilt = true;
     }
 
     public destroy(device: GfxDevice): void {
-        if(!this.hasBeenDestroyed) {
-            device.destroyBuffer(this.indexBuffer);
+        if (!this.hasBeenDestroyed) {
             device.destroyBuffer(this.positionBuffer);
             device.destroyBuffer(this.attribBuffer);
             this.hasBeenDestroyed = true;
@@ -289,10 +278,10 @@ export class DkrDrawCall {
                 this.vertexBufferDescriptors[1].byteOffset = 0;
             }
 
-            renderInst.setVertexInput(this.inputLayout, this.vertexBufferDescriptors, this.indexBufferDescriptor);
+            renderInst.setVertexInput(this.inputLayout, this.vertexBufferDescriptors, null);
 
             renderInst.setGfxProgram(this.gfxProgram);
-            renderInst.setDrawCount(this.indexCount);
+            renderInst.setDrawCount(this.vertices.length);
             renderInst.setMegaStateFlags({
                 cullMode: DkrControlGlobals.ADV2_MIRROR.on ? GfxCullMode.Front : GfxCullMode.Back
             });

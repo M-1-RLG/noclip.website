@@ -2,6 +2,25 @@ use deku::{bitvec::{BitSlice, BitVec}, ctx::ByteSize, prelude::*};
 use wasm_bindgen::prelude::*;
 use std::ops::{Mul, AddAssign};
 
+use crate::geometry::AABB;
+
+#[derive(DekuRead, Debug, Clone, Copy)]
+pub struct Fixedi16 {
+    pub inner: i16,
+}
+
+impl From<Fixedi16> for f32 {
+    fn from(value: Fixedi16) -> Self {
+        value.inner as f32 / 32768.0
+    }
+}
+
+impl From<f32> for Fixedi16 {
+    fn from(value: f32) -> Self {
+        Self { inner: (value * 32768.0) as i16 }
+    }
+}
+
 #[derive(DekuRead, Debug)]
 pub struct Chunk {
     pub magic: [u8; 4],
@@ -92,11 +111,19 @@ impl<'a> Iterator for ChunkedData<'a> {
 pub type WowCharArray = WowArray<u8>;
 
 impl WowArray<u8> {
-    pub fn to_string(&self, data: &[u8]) -> Result<String, DekuError> {
+    pub fn to_string(&self, data: &[u8]) -> Result<String, String> {
         let mut bytes = self.to_vec(data)?;
         bytes.pop(); // pop the null byte
         Ok(String::from_utf8(bytes).unwrap())
     }
+}
+
+pub fn fixed_precision_6_9_to_f32(x: u16) -> f32 {
+    let mut result = (x & 0x1ff) as f32 * (1.0 / 512.0) + (x >> 9) as f32;
+    if x & 0x8000 > 0 {
+        result *= -1.0;
+    }
+    result
 }
 
 #[wasm_bindgen(js_name = "WowQuat")]
@@ -152,6 +179,12 @@ impl Vec3 {
     }
 }
 
+impl From<Vec3> for nalgebra_glm::Vec3 {
+    fn from(value: Vec3) -> Self {
+        nalgebra_glm::vec3(value.x, value.y, value.z)
+    }
+}
+
 #[wasm_bindgen(js_name = "WowVec4")]
 #[derive(DekuRead, Debug, Clone, Copy)]
 pub struct Vec4 {
@@ -172,6 +205,12 @@ impl Vec4 {
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,
+}
+
+impl From<Vec2> for nalgebra_glm::Vec2 {
+    fn from(value: Vec2) -> Self {
+        nalgebra_glm::vec2(value.x, value.y)
+    }
 }
 
 #[wasm_bindgen(js_name = "WowRgba")]
@@ -210,6 +249,15 @@ pub struct Plane {
     pub distance: f32,
 }
 
+impl From<&Plane> for crate::geometry::Plane {
+    fn from(value: &Plane) -> Self {
+        crate::geometry::Plane {
+            d: value.distance,
+            normal: value.normal.into(),
+        }
+    }
+}
+
 // Axis-aligned bounding box
 #[wasm_bindgen(js_name = "WowAABBox")]
 #[derive(DekuRead, Debug, Clone, Copy)]
@@ -227,6 +275,12 @@ impl Default for AABBox {
     }
 }
 
+impl From<AABBox> for AABB {
+    fn from(value: AABBox) -> Self {
+        AABB { min: value.min.into(), max: value.max.into() }
+    }
+}
+
 impl AABBox {
     pub fn update(&mut self, x: f32, y: f32, z: f32) {
         self.min.x = self.min.x.min(x);
@@ -240,18 +294,19 @@ impl AABBox {
 
 #[derive(Debug, DekuRead, Clone, Copy)]
 pub struct WowArray<T> {
-    pub count: u32,
-    pub offset: u32,
+    pub count: i32,
+    pub offset: i32,
     #[deku(skip)]
-    element_type: std::marker::PhantomData<T>,
+    pub element_type: std::marker::PhantomData<T>,
 }
 
 impl<T> WowArray<T> where for<'a> T: DekuRead<'a> {
-    pub fn to_vec(&self, data: &[u8]) -> Result<Vec<T>, DekuError> {
+    pub fn to_vec(&self, data: &[u8]) -> Result<Vec<T>, String> {
         let mut result = Vec::with_capacity(self.count as usize);
         let mut bitslice = BitSlice::from_slice(&data[self.offset as usize..]);
         for _ in 0..self.count {
-            let (new_bitslice, element) = T::read(bitslice, ())?;
+            let (new_bitslice, element) = T::read(bitslice, ())
+                .map_err(|e| format!("{:?}", e))?;
             bitslice = new_bitslice;
             result.push(element);
         }
@@ -306,9 +361,32 @@ impl Lerp for u8 {
     }
 }
 
+impl Lerp for Fixedi16 {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        let a: f32 = self.into();
+        let b: f32 = other.into();
+        Fixedi16::from(a.lerp(b, t))
+    }
+}
+
+impl Lerp for i16 {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        ((self as f32) * (1.0 - t) + (other as f32) * t) as i16
+    }
+}
+
 impl Lerp for u16 {
     fn lerp(self, other: Self, t: f32) -> Self {
         ((self as f32) * (1.0 - t) + (other as f32) * t) as u16
+    }
+}
+
+impl Lerp for Vec2 {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        Vec2 {
+            x: self.x * (1.0 - t) + other.x * t,
+            y: self.y * (1.0 - t) + other.y * t,
+        }
     }
 }
 

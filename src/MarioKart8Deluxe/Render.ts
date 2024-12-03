@@ -280,7 +280,7 @@ void main() {
         if (v !== undefined) {
             return v;
         } else {
-            return glslGenerateFloat(fallback);
+            return '' + fallback;
         }
     }
 
@@ -810,7 +810,7 @@ void main() {
         vec3 t_Transmission = u_TransmissionColorAndIntensity.rgb * u_TransmissionColorAndIntensity.a;
         if (enable_opa_trans_tex) {
             vec2 t_TransTexCoord = SelectTexCoord(${this.shaderOptionInt('texcoord_select_transmitt')});
-            t_Transmission *= texture(u_TextureTransmission, t_TransTexCoord).rgb;
+            t_Transmission *= texture(SAMPLER_2D(u_TextureTransmission), t_TransTexCoord).rgb;
         }
 
         if (enable_opa_trans_albedo)
@@ -1509,7 +1509,7 @@ class FSHPInstance {
             return;
 
         // TODO(jstpierre): Joints.
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         this.fmatInstance.setOnRenderInst(globals, template, modelMatrix);
 
         for (let i = 0; i < this.lodMeshInstances.length; i++) {
@@ -1520,7 +1520,7 @@ class FSHPInstance {
             this.lodMeshInstances[i].prepareToRender(renderInstManager, viewerInput);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 }
 
@@ -1698,11 +1698,11 @@ export class TurboRenderer {
         getMatrixTranslation(scratchVec3, viewerInput.camera.worldMatrix);
         offs += fillVec3v(d, offs, scratchVec3);
 
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
 
         for (let i = 0; i < this.fmdlRenderers.length; i++)
             this.fmdlRenderers[i].prepareToRender(this.globals, renderInstManager, viewerInput);
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
 
         this.renderHelper.prepareToRender();
     }

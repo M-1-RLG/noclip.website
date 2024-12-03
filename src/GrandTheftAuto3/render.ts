@@ -76,7 +76,7 @@ export function rwTexture(texture: rw.Texture, txdName: string, useDXT = true): 
     return { name, width, height, levels, pixelFormat, transparent };
 }
 
-function halve(pixels: Uint8Array, width: number, height: number, bpp: number): Uint8Array {
+function halve(pixels: Uint8Array, width: number, height: number, bpp: number): Uint8Array<ArrayBuffer> {
     const w = Math.max((width / 2) | 0, 1);
     const h = Math.max((height / 2) | 0, 1);
     const UNPACK_ALIGNMENT = 4;
@@ -542,7 +542,7 @@ export class SceneRenderer extends BaseRenderer {
             renderLayer = GfxRendererLayer.TRANSLUCENT;
         if (this.params.water) {
             this.sortKey = makeSortKey(GfxRendererLayer.TRANSLUCENT + 1);
-        } else if (renderLayer === GfxRendererLayer.TRANSLUCENT && this.bbox.minY >= sealevel) {
+        } else if (renderLayer === GfxRendererLayer.TRANSLUCENT && this.bbox.min[1] >= sealevel) {
             this.sortKey = makeSortKey(GfxRendererLayer.TRANSLUCENT + 2);
         } else {
             this.sortKey = makeSortKey(renderLayer);
@@ -653,11 +653,11 @@ export class GTA3Renderer implements Viewer.SceneGfx {
         mapped[offs++] = this.waterOrigin[3];
         mapped[offs++] = viewerInput.time / 1e3;
 
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
         for (let i = 0; i < this.renderers.length; i++)
             this.renderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
     }
 

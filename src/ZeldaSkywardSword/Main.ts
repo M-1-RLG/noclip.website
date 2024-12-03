@@ -209,7 +209,7 @@ class SkywardSwordRenderer implements Viewer.SceneGfx {
         // }
 
         const flipY = gfxDeviceNeedsFlipY(device);
-        this.textureHolder.setTextureOverride('DummyWater', { gfxTexture: null, lateBinding: 'opaque-scene-texture', width: EFB_WIDTH, height: EFB_HEIGHT, flipY })
+        this.textureHolder.setTextureOverride('DummyWater', { gfxTexture: null, lateBinding: 'opaque-scene-texture', width: EFB_WIDTH, height: EFB_HEIGHT, flipY });
         // Override the "Add" textures with a black texture to prevent things from being overly bright.
         this.blackTexture = makeSolidColorTexture2D(device, TransparentBlack);
         this.whiteTexture = makeSolidColorTexture2D(device, TransparentWhite);
@@ -401,7 +401,7 @@ class SkywardSwordRenderer implements Viewer.SceneGfx {
 
     private preparePass(device: GfxDevice, list: GfxRenderInstList, passMask: number, viewerInput: Viewer.ViewerRenderInput): void {
         const renderInstManager = this.renderHelper.renderInstManager;
-        renderInstManager.setCurrentRenderInstList(list);
+        renderInstManager.setCurrentList(list);
         for (let i = 0; i < this.modelInstances.length; i++) {
             const m = this.modelInstances[i];
             if (!(m.passMask & passMask))
@@ -427,7 +427,7 @@ class SkywardSwordRenderer implements Viewer.SceneGfx {
         this.preparePass(device, this.renderInstListSky, ZSSPass.SKYBOX, viewerInput);
         this.preparePass(device, this.renderInstListMain, ZSSPass.MAIN, viewerInput);
         this.preparePass(device, this.renderInstListInd, ZSSPass.INDIRECT, viewerInput);
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
 
         const mainColorDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.Color0, viewerInput, standardFullClearRenderPassDescriptor);
         const mainDepthDesc = makeBackbufferDescSimple(GfxrAttachmentSlot.DepthStencil, viewerInput, standardFullClearRenderPassDescriptor);

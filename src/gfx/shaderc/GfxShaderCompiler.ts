@@ -1,5 +1,5 @@
 
-import { GfxVendorInfo, GfxProgramDescriptorSimple, GfxDevice, GfxViewportOrigin, GfxClipSpaceNearZ } from "../platform/GfxPlatform.js";
+import { GfxVendorInfo, GfxDevice, GfxViewportOrigin, GfxClipSpaceNearZ, GfxRenderProgramDescriptor } from "../platform/GfxPlatform.js";
 import { assert } from "../platform/GfxPlatformUtil.js";
 import { GfxShaderLibrary, glslGenerateFloat } from "../helpers/GfxShaderLibrary.js";
 
@@ -68,9 +68,9 @@ export function preprocessShader_GLSL(vendorInfo: GfxVendorInfo, type: 'vert' | 
             maxSamplerBinding = Math.max(maxSamplerBinding, binding);
 
             const [textureType, samplerType] = getSeparateSamplerTypes(combinedSamplerType);
-            return type === 'frag' ? `
+            return `
 layout(set = ${set}, binding = ${(binding * 2) + 0}) uniform texture${textureType} T_${samplerName};
-layout(set = ${set}, binding = ${(binding * 2) + 1}) uniform sampler${samplerType} S_${samplerName};`.trim() : '';
+layout(set = ${set}, binding = ${(binding * 2) + 1}) uniform sampler${samplerType} S_${samplerName};`.trim();
         });
 
         let bufferBinding = maxSamplerBinding * 2 + 2;
@@ -79,7 +79,7 @@ layout(set = ${set}, binding = ${(binding * 2) + 1}) uniform sampler${samplerTyp
             return `layout(${layout2}set = ${set}, binding = ${bufferBinding++}) uniform ${rest}`;
         });
 
-        rest = rest.replace(type === 'frag' ? /^\b(varying|in)\b/gm : /^\b(varying|out)\b/gm, (substr, tok) => {
+        rest = rest.replace(type === 'frag' ? /^\b(flat\W+)?(varying|in)\b/gm : /^\b(flat\W+)?(varying|out)\b/gm, (tok) => {
             return `layout(location = ${location++}) ${tok}`;
         });
 
@@ -167,12 +167,12 @@ ${rest}
 `.trim();
 }
 
-interface GfxProgramDescriptorSimpleWithOrig extends GfxProgramDescriptorSimple {
+interface GfxProgramDescriptorWithOrig extends GfxRenderProgramDescriptor {
     vert: string;
     frag: string;
 }
 
-export function preprocessProgram_GLSL(vendorInfo: GfxVendorInfo, vert: string, frag: string, defines: DefineMap | null = null): GfxProgramDescriptorSimpleWithOrig {
+export function preprocessProgram_GLSL(vendorInfo: GfxVendorInfo, vert: string, frag: string, defines: DefineMap | null = null): GfxProgramDescriptorWithOrig {
     const preprocessedVert = preprocessShader_GLSL(vendorInfo, 'vert', vert, defines);
     const preprocessedFrag = preprocessShader_GLSL(vendorInfo, 'frag', frag, defines);
     return { vert, frag, preprocessedVert, preprocessedFrag };
@@ -185,7 +185,7 @@ export interface GfxProgramObjBag {
     defines?: DefineMap;
 }
 
-export function preprocessProgramObj_GLSL(device: GfxDevice, obj: GfxProgramObjBag): GfxProgramDescriptorSimpleWithOrig {
+export function preprocessProgramObj_GLSL(device: GfxDevice, obj: GfxProgramObjBag): GfxProgramDescriptorWithOrig {
     const defines = obj.defines !== undefined ? obj.defines : null;
     const vert = obj.both !== undefined ? obj.both + obj.vert : obj.vert;
     const frag = obj.both !== undefined ? obj.both + obj.frag : obj.frag;

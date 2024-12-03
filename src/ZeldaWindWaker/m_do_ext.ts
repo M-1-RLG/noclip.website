@@ -105,9 +105,9 @@ export function mDoExt_modelEntryDL(globals: dGlobals, modelInstance: J3DModelIn
 
     modelInstance.calcView(viewerInput.camera, viewerInput.camera.viewMatrix);
 
-    renderInstManager.setCurrentRenderInstList(drawListSet[0]);
+    renderInstManager.setCurrentList(drawListSet[0]);
     modelInstance.drawOpa(device, renderInstManager, viewerInput.camera);
-    renderInstManager.setCurrentRenderInstList(drawListSet[1]);
+    renderInstManager.setCurrentList(drawListSet[1]);
     modelInstance.drawXlu(device, renderInstManager, viewerInput.camera);
 }
 
@@ -188,7 +188,7 @@ export class mDoExt_McaMorf implements JointMatrixCalc {
     }
 
     public setMorf(morfFrames: number): void {
-        if (this.prevMorf < 0.0 || morfFrames < 0.0) {
+        if (this.prevMorf < 0.0 || morfFrames <= 0.0) {
             this.curMorf = 1.0;
         } else {
             this.curMorf = 0.0;

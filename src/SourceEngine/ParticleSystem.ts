@@ -1307,7 +1307,7 @@ class Renderer_AnimatedSprites extends ModuleBase {
         const view = renderContext.currentView;
         const staticQuad = renderContext.materialCache.staticResources.staticQuad;
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         staticQuad.setQuadOnRenderInst(template);
 
         if (this.orientationType === 2) {
@@ -1363,10 +1363,7 @@ class Renderer_AnimatedSprites extends ModuleBase {
                 p[2].value = data[colorOffs + 2];
                 colorOffs += stride;
             } else {
-                const p = (materialInstance.param['$color'] as any).internal;
-                p[0].value = system.constColor.r;
-                p[1].value = system.constColor.g;
-                p[2].value = system.constColor.b;
+                materialInstance.paramSetColor('$color', system.constColor);
             }
 
             if (alphaOffs !== null) {
@@ -1471,7 +1468,7 @@ class Renderer_AnimatedSprites extends ModuleBase {
             materialInstance.getRenderInstListForView(view).submitRenderInst(renderInst);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 }
 
@@ -1705,8 +1702,13 @@ export class ParticleSystemInstance {
 
     public getControlPointTransform(dst: mat4, i: number, time: number): void {
         const point = this.controller.controlPoints[i];
-        // TODO(jstpierre): time lerp
-        mat4.copy(dst, point.transform);
+        if (point !== undefined) {
+            // TODO(jstpierre): time lerp
+            mat4.copy(dst, point.transform);
+        } else {
+            // Missing control point.
+            mat4.identity(dst);
+        }
     }
 
     public randF32(): number {

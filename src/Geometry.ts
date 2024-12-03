@@ -1,7 +1,10 @@
 
 import { vec3, ReadonlyVec3, ReadonlyMat4, vec4, ReadonlyVec4, mat4 } from "gl-matrix";
 import { GfxClipSpaceNearZ } from "./gfx/platform/GfxPlatform.js";
-import { assert, nArray } from "./util.js";
+import { nArray } from "./util.js";
+import type { ConvexHull } from "../rust/pkg/noclip_support";
+import { rust } from "./rustlib.js";
+import { getMatrixTranslation, vec3SetAll } from "./MathHelpers.js";
 
 const scratchVec4 = vec4.create();
 const scratchMatrix = mat4.create();
@@ -88,75 +91,62 @@ const scratchVec3b = vec3.create();
 const scratchVec3c = vec3.create();
 const scratchVec3d = vec3.create();
 export class AABB {
+    public min = vec3.create();
+    public max = vec3.create();
+
     constructor(
-        public minX: number = Infinity,
-        public minY: number = Infinity,
-        public minZ: number = Infinity,
-        public maxX: number = -Infinity,
-        public maxY: number = -Infinity,
-        public maxZ: number = -Infinity,
-    ) {}
+        minX: number = Infinity,
+        minY: number = Infinity,
+        minZ: number = Infinity,
+        maxX: number = -Infinity,
+        maxY: number = -Infinity,
+        maxZ: number = -Infinity,
+    ) {
+        vec3.set(this.min, minX, minY, minZ);
+        vec3.set(this.max, maxX, maxY, maxZ);
+    }
 
     public transform(src: AABB, m: ReadonlyMat4): void {
         // Transforming Axis-Aligned Bounding Boxes from Graphics Gems.
-        const srcMin = scratchVec3a, srcMax = scratchVec3b;
-        vec3.set(srcMin, src.minX, src.minY, src.minZ);
-        vec3.set(srcMax, src.maxX, src.maxY, src.maxZ);
-        const dstMin = scratchVec3c, dstMax = scratchVec3d;
 
         // Translation can be applied directly.
-        vec3.set(dstMin, m[12], m[13], m[14]);
-        vec3.set(dstMax, m[12], m[13], m[14]);
+        getMatrixTranslation(scratchVec3a, m);
+        getMatrixTranslation(scratchVec3b, m);
         for (let i = 0; i < 3; i++) {
             for (let j = 0; j < 3; j++) {
-                const a = m[i*4 + j] * srcMin[i];
-                const b = m[i*4 + j] * srcMax[i];
-                dstMin[j] += Math.min(a, b);
-                dstMax[j] += Math.max(a, b);
+                const a = m[i*4 + j] * src.min[i];
+                const b = m[i*4 + j] * src.max[i];
+                scratchVec3a[j] += Math.min(a, b);
+                scratchVec3b[j] += Math.max(a, b);
             }
         }
-
-        this.minX = dstMin[0];
-        this.minY = dstMin[1];
-        this.minZ = dstMin[2];
-        this.maxX = dstMax[0];
-        this.maxY = dstMax[1];
-        this.maxZ = dstMax[2];
+        vec3.copy(this.min, scratchVec3a);
+        vec3.copy(this.max, scratchVec3b);
     }
 
     public offset(src: AABB, offset: ReadonlyVec3): void {
-        this.minX = src.minX + offset[0];
-        this.minY = src.minY + offset[1];
-        this.minZ = src.minZ + offset[2];
-        this.maxX = src.maxX + offset[0];
-        this.maxY = src.maxY + offset[1];
-        this.maxZ = src.maxZ + offset[2];
+        vec3.add(this.min, src.min, offset);
+        vec3.add(this.max, src.max, offset);
     }
 
     public expandByExtent(src: AABB, extent: ReadonlyVec3): void {
-        this.minX = src.minX - extent[0];
-        this.minY = src.minY - extent[1];
-        this.minZ = src.minZ - extent[2];
-        this.maxX = src.maxX + extent[0];
-        this.maxY = src.maxY + extent[1];
-        this.maxZ = src.maxZ + extent[2];
+        vec3.sub(this.min, src.min, extent);
+        vec3.add(this.max, src.max, extent);
     }
 
     public set(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): void {
-        this.minX = minX;
-        this.minY = minY;
-        this.minZ = minZ;
-        this.maxX = maxX;
-        this.maxY = maxY;
-        this.maxZ = maxZ;
+        vec3.set(this.min, minX, minY, minZ);
+        vec3.set(this.max, maxX, maxY, maxZ);
     }
 
     public reset(): void {
-        this.set(Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity);
+        vec3SetAll(this.min, Infinity);
+        vec3SetAll(this.max, -Infinity);
     }
 
     public copy(other: AABB): void {
-        this.set(other.minX, other.minY, other.minZ, other.maxX, other.maxY, other.maxZ);
+        vec3.copy(this.min, other.min);
+        vec3.copy(this.max, other.max);
     }
 
     public clone(): AABB {
@@ -165,60 +155,51 @@ export class AABB {
         return aabb;
     }
 
-    public setFromPoints(points: vec3[]): void {
-        this.minX = this.minY = this.minZ = Infinity;
-        this.maxX = this.maxY = this.maxZ = -Infinity;
+    public setFromPoints(points: ReadonlyVec3[]): void {
+        this.reset();
 
         for (let i = 0; i < points.length; i++) {
             const p = points[i];
-            this.minX = Math.min(this.minX, p[0]);
-            this.minY = Math.min(this.minY, p[1]);
-            this.minZ = Math.min(this.minZ, p[2]);
-            this.maxX = Math.max(this.maxX, p[0]);
-            this.maxY = Math.max(this.maxY, p[1]);
-            this.maxZ = Math.max(this.maxZ, p[2]);
+            vec3.min(this.min, this.min, p);
+            vec3.min(this.max, this.max, p);
         }
     }
 
     public union(a: AABB, b: AABB): void {
-        this.minX = Math.min(a.minX, b.minX);
-        this.minY = Math.min(a.minY, b.minY);
-        this.minZ = Math.min(a.minZ, b.minZ);
-        this.maxX = Math.max(a.maxX, b.maxX);
-        this.maxY = Math.max(a.maxY, b.maxY);
-        this.maxZ = Math.max(a.maxZ, b.maxZ);
+        vec3.min(this.min, a.min, b.min);
+        vec3.max(this.max, a.max, b.max);
     }
 
     public unionPoint(v: ReadonlyVec3): boolean {
         let changed = false;
 
-        if (v[0] < this.minX) {
-            this.minX = v[0];
+        if (v[0] < this.min[0]) {
+            this.min[0] = v[0];
             changed = true;
         }
 
-        if (v[1] < this.minY) {
-            this.minY = v[1];
+        if (v[1] < this.min[1]) {
+            this.min[1] = v[1];
             changed = true;
         }
 
-        if (v[2] < this.minZ) {
-            this.minZ = v[2];
+        if (v[2] < this.min[2]) {
+            this.min[2] = v[2];
             changed = true;
         }
 
-        if (v[0] > this.maxX) {
-            this.maxX = v[0];
+        if (v[0] > this.max[0]) {
+            this.max[0] = v[0];
             changed = true;
         }
 
-        if (v[1] > this.maxY) {
-            this.maxY = v[1];
+        if (v[1] > this.max[1]) {
+            this.max[1] = v[1];
             changed = true;
         }
 
-        if (v[2] > this.maxZ) {
-            this.maxZ = v[2];
+        if (v[2] > this.max[2]) {
+            this.max[2] = v[2];
             changed = true;
         }
 
@@ -227,89 +208,85 @@ export class AABB {
 
     public static intersect(a: AABB, b: AABB): boolean {
         return !(
-            a.minX > b.maxX || b.minX > a.maxX ||
-            a.minY > b.maxY || b.minY > a.maxY ||
-            a.minZ > b.maxZ || b.minZ > a.maxZ);
+            a.min[0] > b.max[0] || b.min[0] > a.max[0] ||
+            a.min[1] > b.max[1] || b.min[1] > a.max[1] ||
+            a.min[2] > b.max[2] || b.min[2] > a.max[2]);
     }
 
     public containsPoint(v: ReadonlyVec3): boolean {
         const pX = v[0], pY = v[1], pZ = v[2];
         return !(
-            pX < this.minX || pX > this.maxX ||
-            pY < this.minY || pY > this.maxY ||
-            pZ < this.minZ || pZ > this.maxZ);
+            pX < this.min[0] || pX > this.max[0] ||
+            pY < this.min[1] || pY > this.max[1] ||
+            pZ < this.min[2] || pZ > this.max[2]);
     }
 
     public containsSphere(v: ReadonlyVec3, rad: number): boolean {
         const pX = v[0], pY = v[1], pZ = v[2];
         return !(
-            pX < this.minX - rad || pX > this.maxX + rad ||
-            pY < this.minY - rad || pY > this.maxY + rad ||
-            pZ < this.minZ - rad || pZ > this.maxZ + rad);
+            pX < this.min[0] - rad || pX > this.max[0] + rad ||
+            pY < this.min[1] - rad || pY > this.max[1] + rad ||
+            pZ < this.min[2] - rad || pZ > this.max[2] + rad);
     }
 
     public extents(v: vec3): void {
-        v[0] = Math.max((this.maxX - this.minX) / 2, 0);
-        v[1] = Math.max((this.maxY - this.minY) / 2, 0);
-        v[2] = Math.max((this.maxZ - this.minZ) / 2, 0);
+        v[0] = Math.max((this.max[0] - this.min[0]) / 2, 0);
+        v[1] = Math.max((this.max[1] - this.min[1]) / 2, 0);
+        v[2] = Math.max((this.max[2] - this.min[2]) / 2, 0);
     }
 
     public diagonalLengthSquared(): number {
-        const dx = this.maxX - this.minX;
-        const dy = this.maxY - this.minY;
-        const dz = this.maxZ - this.minZ;
+        const dx = this.max[0] - this.min[0];
+        const dy = this.max[1] - this.min[1];
+        const dz = this.max[2] - this.min[2];
         return dx*dx + dy*dy + dz*dz;
     }
 
     public centerPoint(v: vec3): void {
-        v[0] = (this.minX + this.maxX) / 2;
-        v[1] = (this.minY + this.maxY) / 2;
-        v[2] = (this.minZ + this.maxZ) / 2;
+        v[0] = (this.min[0] + this.max[0]) / 2;
+        v[1] = (this.min[1] + this.max[1]) / 2;
+        v[2] = (this.min[2] + this.max[2]) / 2;
     }
 
     public setFromCenterAndExtents(center: ReadonlyVec3, extents: ReadonlyVec3): void {
-        this.minX = center[0] - extents[0];
-        this.minY = center[1] - extents[1];
-        this.minZ = center[2] - extents[2];
-        this.maxX = center[0] + extents[0];
-        this.maxY = center[1] + extents[1];
-        this.maxZ = center[2] + extents[2];
+        vec3.sub(this.min, center, extents);
+        vec3.add(this.max, center, extents);
     }
 
     public cornerPoint(dst: vec3, i: number): void {
         if (i === 0)
-            vec3.set(dst, this.minX, this.minY, this.minZ);
+            vec3.set(dst, this.min[0], this.min[1], this.min[2]);
         else if (i === 1)
-            vec3.set(dst, this.maxX, this.minY, this.minZ);
+            vec3.set(dst, this.max[0], this.min[1], this.min[2]);
         else if (i === 2)
-            vec3.set(dst, this.minX, this.maxY, this.minZ);
+            vec3.set(dst, this.min[0], this.max[1], this.min[2]);
         else if (i === 3)
-            vec3.set(dst, this.maxX, this.maxY, this.minZ);
+            vec3.set(dst, this.max[0], this.max[1], this.min[2]);
         else if (i === 4)
-            vec3.set(dst, this.minX, this.minY, this.maxZ);
+            vec3.set(dst, this.min[0], this.min[1], this.max[2]);
         else if (i === 5)
-            vec3.set(dst, this.maxX, this.minY, this.maxZ);
+            vec3.set(dst, this.max[0], this.min[1], this.max[2]);
         else if (i === 6)
-            vec3.set(dst, this.minX, this.maxY, this.maxZ);
+            vec3.set(dst, this.min[0], this.max[1], this.max[2]);
         else if (i === 7)
-            vec3.set(dst, this.maxX, this.maxY, this.maxZ);
+            vec3.set(dst, this.max[0], this.max[1], this.max[2]);
         else
             throw "whoops";
     }
 
     public boundingSphereRadius(): number {
-        const extX = (this.maxX - this.minX);
-        const extY = (this.maxY - this.minY);
-        const extZ = (this.maxZ - this.minZ);
+        const extX = (this.max[0] - this.min[0]);
+        const extY = (this.max[1] - this.min[1]);
+        const extZ = (this.max[2] - this.min[2]);
         const chord = Math.hypot(extX, extY, extZ);
         return chord / 2;
     }
 
     public maxCornerRadius(): number {
-        const x = Math.max(this.maxX, -this.minX);
-        const y = Math.max(this.maxY, -this.minY);
-        const z = Math.max(this.maxZ, -this.minZ);
-        return Math.sqrt(x*x + y*y + z*z);
+        const x = Math.max(this.max[0], -this.min[0]);
+        const y = Math.max(this.max[1], -this.min[1]);
+        const z = Math.max(this.max[2], -this.min[2]);
+        return Math.hypot(x, y, z);
     }
 
     public isEmpty(): boolean {
@@ -330,100 +307,63 @@ export enum IntersectionState {
 }
 
 export class Frustum {
-    public planes: Plane[] = [];
+    private convexHull: ConvexHull;
 
-    constructor(nPlanes = 6) {
-        this.planes = nArray(nPlanes, () => new Plane());
+    constructor(convexHull?: ConvexHull) {
+        this.convexHull = convexHull ?? new rust.ConvexHull();
     }
 
     public updateClipFrustum(m: ReadonlyMat4, clipSpaceNearZ: GfxClipSpaceNearZ): void {
         // http://www8.cs.umu.se/kurser/5DV051/HT12/lab/plane_extraction.pdf
-        // Note that we look down the -Z axis, rather than the +Z axis, so we have to invert all of our planes...
-        assert(this.planes.length === 6, `Frustum.updateClipFrustum expects 6 planes, this contains ${this.planes.length}`);
 
-        this.planes[0].set4Unnormalized(-(m[3] + m[0]), -(m[7] + m[4]), -(m[11] + m[8]) , -(m[15] + m[12])); // Left
-        this.planes[1].set4Unnormalized(-(m[3] + m[1]), -(m[7] + m[5]), -(m[11] + m[9]) , -(m[15] + m[13])); // Top
-        this.planes[2].set4Unnormalized(-(m[3] - m[0]), -(m[7] - m[4]), -(m[11] - m[8]) , -(m[15] - m[12])); // Right
-        this.planes[3].set4Unnormalized(-(m[3] - m[1]), -(m[7] - m[5]), -(m[11] - m[9]) , -(m[15] - m[13])); // Bottom
+        const h = this.convexHull;
+        h.clear();
+        h.push_plane(m[3] + m[0], m[7] + m[4], m[11] + m[8], m[15] + m[12]); // Left
+        h.push_plane(m[3] + m[1], m[7] + m[5], m[11] + m[9], m[15] + m[13]); // Top
+        h.push_plane(m[3] - m[0], m[7] - m[4], m[11] - m[8], m[15] - m[12]); // Right
+        h.push_plane(m[3] - m[1], m[7] - m[5], m[11] - m[9], m[15] - m[13]); // Bottom
 
         if (clipSpaceNearZ === GfxClipSpaceNearZ.NegativeOne) {
-            this.planes[4].set4Unnormalized(-(m[3] + m[2]), -(m[7] + m[6]), -(m[11] + m[10]), -(m[15] + m[14])); // Near
+            h.push_plane(m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]); // Near
         } else if (clipSpaceNearZ === GfxClipSpaceNearZ.Zero) {
-            this.planes[4].set4Unnormalized(-(m[2]), -(m[6]), -(m[10]), -(m[14])); // Near
+            h.push_plane(m[2], m[6], m[10], m[14]); // Near
         }
 
-        this.planes[5].set4Unnormalized(-(m[3] - m[2]), -(m[7] - m[6]), -(m[11] - m[10]), -(m[15] - m[14])); // Far
+        h.push_plane(m[3] - m[2], m[7] - m[6], m[11] - m[10], m[15] - m[14]); // Far
     }
 
-    public copy(o: Frustum) {
-        while (this.planes.length < o.planes.length) {
-            this.planes.push(new Plane());
-        }
-        for (let i in o.planes) {
-            this.planes[i].copy(o.planes[i]);
-        }
+    public copy(o: Frustum): void {
+        this.convexHull.free();
+        this.convexHull = o.convexHull.copy();
+    }
+
+    public clone(): Frustum {
+        return new Frustum(this.convexHull.copy());
     }
 
     public intersect(aabb: AABB): IntersectionState {
-        let ret = IntersectionState.Inside;
-
-        // Test planes.
-        for (let i = 0; i < this.planes.length; i++) {
-            const plane = this.planes[i];
-            // Nearest point to the frustum.
-            const px = plane.n[0] >= 0 ? aabb.minX : aabb.maxX;
-            const py = plane.n[1] >= 0 ? aabb.minY : aabb.maxY;
-            const pz = plane.n[2] >= 0 ? aabb.minZ : aabb.maxZ;
-            if (plane.distance(px, py, pz) > 0)
-                return IntersectionState.Outside;
-            // Farthest point from the frustum.
-            const fx = plane.n[0] >= 0 ? aabb.maxX : aabb.minX;
-            const fy = plane.n[1] >= 0 ? aabb.maxY : aabb.minY;
-            const fz = plane.n[2] >= 0 ? aabb.maxZ : aabb.minZ;
-            if (plane.distance(fx, fy, fz) > 0)
-                ret = IntersectionState.Intersection;
-        }
-
-        return ret;
+        return this.convexHull.js_intersect_aabb(aabb.min[0], aabb.min[1], aabb.min[2], aabb.max[0], aabb.max[1], aabb.max[2]);
     }
 
     public contains(aabb: AABB): boolean {
-        return this.intersect(aabb) !== IntersectionState.Outside;
-    }
-
-    private intersectSphere(v: ReadonlyVec3, radius: number): IntersectionState {
-        let res = IntersectionState.Inside;
-        for (let i = 0; i < this.planes.length; i++) {
-            const plane = this.planes[i];
-            const dist = plane.distance(v[0], v[1], v[2]);
-            if (dist > radius)
-                return IntersectionState.Outside;
-            else if (dist > -radius)
-                res = IntersectionState.Intersection;
-        }
-
-        return res;
+        return this.convexHull.js_contains_aabb(aabb.min[0], aabb.min[1], aabb.min[2], aabb.max[0], aabb.max[1], aabb.max[2]);
     }
 
     public containsSphere(v: ReadonlyVec3, radius: number): boolean {
-        return this.intersectSphere(v, radius) !== IntersectionState.Outside;
+        return this.convexHull.js_contains_sphere(v[0], v[1], v[2], radius);
     }
 
     public containsPoint(v: ReadonlyVec3): boolean {
-        for (let i = 0; i < this.planes.length; i++) {
-            const plane = this.planes[i];
-            if (plane.distance(v[0], v[1], v[2]) > 0)
-                return false;
-        }
-
-        return true;
+        return this.convexHull.js_contains_point(v as Float32Array);
     }
 
     public transform(src: Frustum, m: ReadonlyMat4): void {
-        for (let i = 0; i < this.planes.length; i++) {
-            this.planes[i].copy(src.planes[i]);
-            this.planes[i].transform(m);
-        }
+        this.copy(src);
+        return this.convexHull.js_transform(m as Float32Array);
+    }
+
+    public getRust(): ConvexHull {
+        return this.convexHull;
     }
 }
 
@@ -436,20 +376,20 @@ export function squaredDistanceFromPointToAABB(v: vec3, aabb: AABB): number {
     const pX = v[0], pY = v[1], pZ = v[2];
     let sqDist = 0;
 
-    if (pX < aabb.minX)
-        sqDist += (aabb.minX - pX) ** 2.0;
-    else if (pX > aabb.maxX)
-        sqDist += (pX - aabb.maxX) ** 2.0;
+    if (pX < aabb.min[0])
+        sqDist += (aabb.min[0] - pX) ** 2.0;
+    else if (pX > aabb.max[1])
+        sqDist += (pX - aabb.max[1]) ** 2.0;
 
-    if (pY < aabb.minY)
-        sqDist += (aabb.minY - pY) ** 2.0;
-    else if (pY > aabb.maxY)
-        sqDist += (pY - aabb.maxY) ** 2.0;
+    if (pY < aabb.min[1])
+        sqDist += (aabb.min[1] - pY) ** 2.0;
+    else if (pY > aabb.max[1])
+        sqDist += (pY - aabb.max[1]) ** 2.0;
 
-    if (pZ < aabb.minZ)
-        sqDist += (aabb.minZ - pZ) ** 2.0;
-    else if (pZ > aabb.maxZ)
-        sqDist += (pZ - aabb.maxZ) ** 2.0;
+    if (pZ < aabb.min[2])
+        sqDist += (aabb.min[2] - pZ) ** 2.0;
+    else if (pZ > aabb.max[2])
+        sqDist += (pZ - aabb.max[2]) ** 2.0;
 
     return sqDist;
 }

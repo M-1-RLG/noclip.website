@@ -21,7 +21,7 @@ import { AABB } from '../Geometry.js';
 import { setAttachmentStateSimple } from '../gfx/helpers/GfxMegaStateDescriptorHelpers.js';
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache.js";
 
-function decodeTextureData(format: TextureFormat, width: number, height: number, pixels: Uint8Array): DecodedSurfaceSW {
+function decodeTextureData(format: TextureFormat, width: number, height: number, pixels: Uint8Array<ArrayBuffer>): DecodedSurfaceSW {
     switch (format) {
     case TextureFormat.B8G8R8A8:
         return { type: 'RGBA', flag: 'SRGB', width, height, depth: 1, pixels };
@@ -482,7 +482,7 @@ export class SceneRenderer {
     }
 
     public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: Viewer.ViewerRenderInput): void {
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.setBindingLayouts(bindingLayouts);
 
         let offs = template.allocateUniformBuffer(PsychonautsProgram.ub_SceneParams, 16);
@@ -490,7 +490,7 @@ export class SceneRenderer {
         fillSceneParamsData(sceneParamsMapped, viewerInput.camera, offs);
 
         this.domainInstance.prepareToRender(device, renderInstManager, viewerInput);
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     public destroy(device: GfxDevice): void {
@@ -521,10 +521,10 @@ export class PsychonautsRenderer {
 
     public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
         this.renderHelper.pushTemplateRenderInst();
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
         for (let i = 0; i < this.sceneRenderers.length; i++)
             this.sceneRenderers[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
     }
 

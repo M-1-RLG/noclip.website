@@ -6,7 +6,7 @@
 // and support for a wider variety of variants.
 
 import CodeEditor from "../CodeEditor.js";
-import { GfxDevice, GfxProgramDescriptorSimple } from "../gfx/platform/GfxPlatform.js";
+import { GfxDevice, GfxRenderProgramDescriptor } from "../gfx/platform/GfxPlatform.js";
 import { GfxProgram } from "../gfx/platform/GfxPlatformImpl.js";
 import { GfxRenderCache } from "../gfx/render/GfxRenderCache.js";
 import { preprocessShader_GLSL } from "../gfx/shaderc/GfxShaderCompiler.js";
@@ -85,7 +85,7 @@ export abstract class UberShaderTemplate<T> {
         cache.device.programPatched(program, descriptor);
     }
 
-    protected abstract createGfxProgramDescriptor(cache: GfxRenderCache, variantSettings: T, shaderTextOverride?: string): GfxProgramDescriptorSimple;
+    protected abstract createGfxProgramDescriptor(cache: GfxRenderCache, variantSettings: T, shaderTextOverride?: string): GfxRenderProgramDescriptor;
 
     public abstract generateProgramString(variantSettings: T): string | null;
 
@@ -145,7 +145,7 @@ export class UberShaderTemplateBasic extends UberShaderTemplate<DefinesMap> {
         return -1;
     }
 
-    protected createGfxProgramDescriptor(cache: GfxRenderCache, variantSettings: DefinesMap, shaderTextOverride?: string): GfxProgramDescriptorSimple {
+    protected createGfxProgramDescriptor(cache: GfxRenderCache, variantSettings: DefinesMap, shaderTextOverride?: string): GfxRenderProgramDescriptor {
         const maxSamplerBinding = this.getMaxSamplerBinding();
         const vendorInfo = cache.device.queryVendorInfo();
         const programString = shaderTextOverride ?? this.generateProgramString(variantSettings);
@@ -156,7 +156,7 @@ export class UberShaderTemplateBasic extends UberShaderTemplate<DefinesMap> {
 
     protected override createGfxProgram(cache: GfxRenderCache, variantSettings: DefinesMap): GfxProgram {
         // We do our own caching here; no need to use the render cache for this.
-        return cache.device.createProgramSimple(this.createGfxProgramDescriptor(cache, variantSettings));
+        return cache.device.createProgram(this.createGfxProgramDescriptor(cache, variantSettings));
     }
 
     public override destroy(device: GfxDevice): void {
@@ -211,6 +211,11 @@ export class UberShaderInstanceBasic extends UberShaderInstance<DefinesMap> {
     }
 
     public setDefineString(name: string, v: string | null): boolean {
+        if (this.gfxProgram !== null) {
+            this.invalidate();
+            this.variantSettings = new Map<string, string>(this.variantSettings);
+        }
+
         if (v !== null) {
             if (this.variantSettings.get(name) === v)
                 return false;
@@ -221,7 +226,6 @@ export class UberShaderInstanceBasic extends UberShaderInstance<DefinesMap> {
             this.variantSettings.delete(name);
         }
 
-        this.invalidate();
         return true;
     }
 

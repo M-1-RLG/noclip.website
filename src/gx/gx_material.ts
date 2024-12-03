@@ -8,7 +8,7 @@ import { GfxFormat } from '../gfx/platform/GfxPlatformFormat.js';
 import { vec3, mat4, ReadonlyVec3 } from 'gl-matrix';
 import { Camera } from '../Camera.js';
 import { assert } from '../util.js';
-import { IS_DEPTH_REVERSED } from '../gfx/helpers/ReversedDepthHelpers.js';
+import { IsDepthReversed } from '../gfx/helpers/ReversedDepthHelpers.js';
 import { MathConstants, transformVec3Mat4w1, transformVec3Mat4w0 } from '../MathHelpers.js';
 import { DisplayListRegisters, VertexAttributeInput } from './gx_displaylist.js';
 import { DeviceProgram } from '../Program.js';
@@ -666,8 +666,8 @@ ${this.generateLightAttnFn(chan, lightName)}
         assert(texCoordGen.type >= GX.TexGenType.BUMP0 && texCoordGen.type <= GX.TexGenType.BUMP7);
         const lightIdx = (texCoordGen.type - GX.TexGenType.BUMP0);
         const lightDir = `normalize(u_LightParams[${lightIdx}].Position.xyz - v_Position.xyz)`;
-        const t = this.generateMulNrm(`a_Tangent`, false);
-        const b = this.generateMulNrm(`a_Binormal`, false);
+        const t = this.generateMul(`a_Tangent`, false, false);
+        const b = this.generateMul(`a_Binormal`, false, false);
         return `${src}.xyz + vec3(dot(${lightDir}, ${t}.xyz), dot(${lightDir}, ${b}.xyz), 0.0)`;
     }
 
@@ -1238,7 +1238,7 @@ ${this.generateLightAttnFn(chan, lightName)}
     }
 
     private generateFogZCoord() {
-        const isDepthReversed = IS_DEPTH_REVERSED;
+        const isDepthReversed = IsDepthReversed;
         if (isDepthReversed)
             return `(1.0 - gl_FragCoord.z)`;
         else
@@ -1385,20 +1385,13 @@ ${this.generateFogAdj(`t_FogBase`)}
         }).join('\n');
     }
 
-    private generateMulPos(): string {
-        const src = `vec4(a_Position.xyz, 1.0)`;
-        if (materialUsePnMtxIdx(this.material))
-            return this.generateMulPntMatrixDynamic(`a_Position.w`, src);
-        else
-            return this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src);
-    }
-
-    private generateMulNrm(attr: string, normalize: boolean): string {
-        const src = `vec4(${attr}.xyz, 0.0)`;
+    private generateMul(attr: string, pos: boolean, nrm: boolean): string {
+        const mul = nrm ? `MulNormalMatrix` : `Mul`;
+        const src = nrm ? attr : `vec4(${attr}.xyz, ${pos ? `1.0` : `0.0`})`;
         const gen = materialUsePnMtxIdx(this.material) ?
-            this.generateMulPntMatrixDynamic(`a_Position.w`, src, `MulNormalMatrix`) :
-            this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src, `MulNormalMatrix`);
-        return normalize ? `normalize(${gen})` : gen;
+            this.generateMulPntMatrixDynamic(`a_Position.w`, src, mul) :
+            this.generateMulPntMatrixStatic(GX.TexGenMatrix.PNMTX0, src, mul);
+        return pos ? gen : `normalize(${gen}.xyz)`;
     }
 
     private generateShaders(): void {
@@ -1433,18 +1426,14 @@ Mat4x3 GetPosTexMatrix(float t_MtxIdxFloat) {
 
 ${GfxShaderLibrary.MulNormalMatrix}
 
-vec3 MulNormalMatrix(Mat4x3 t_Matrix, vec4 t_Value) {
-    return MulNormalMatrix(t_Matrix, t_Value.xyz);
-}
-
 float ApplyAttenuation(vec3 t_Coeff, float t_Value) {
     return dot(t_Coeff, vec3(1.0, t_Value, t_Value*t_Value));
 }
 
 void main() {
-    vec3 t_Position = ${this.generateMulPos()};
+    vec3 t_Position = ${this.generateMul(`a_Position`, true, false)};
     v_Position = t_Position;
-    vec3 t_Normal = ${this.usesNormal() ? this.generateMulNrm(`a_Normal`, true) : `vec3(0.0)`};
+    vec3 t_Normal = ${this.usesNormal() ? this.generateMul(`a_Normal`, false, true) : `vec3(0.0)`};
 
     vec4 t_LightAccum;
     vec3 t_LightDelta, t_LightDeltaDir;

@@ -23,7 +23,7 @@ import { fillSceneParamsData } from './scenes.js';
 import { setMatrixTranslation } from '../MathHelpers.js';
 import { GfxrAttachmentSlot, GfxrTemporalTexture } from '../gfx/render/GfxRenderGraph.js';
 
-const pathBase = `katamari_damacy`;
+const pathBase = `KatamariDamacy`;
 const katamariWorldSpaceToNoclipSpace = mat4.create();
 mat4.rotateX(katamariWorldSpaceToNoclipSpace, katamariWorldSpaceToNoclipSpace, Math.PI);
 const bindingLayouts: GfxBindingLayoutDescriptor[] = [{ numUniformBuffers: 2, numSamplers: 1 }];
@@ -250,14 +250,14 @@ export class GallerySceneRenderer implements SceneGfx {
         const sceneParamsMapped = template.mapUniformBufferF32(KatamariDamacyProgram.ub_SceneParams);
         fillSceneParamsData(sceneParamsMapped, viewerInput.camera, 0, offs);
 
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
 
         this.circle.prepareToRender(this.renderHelper.renderInstManager, viewerInput);
 
         for (let i = 0; i < this.objectRenderers.length; i++)
             this.objectRenderers[i].prepareToRender(this.renderHelper.renderInstManager, viewerInput, katamariWorldSpaceToNoclipSpace, 1);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
     }
 

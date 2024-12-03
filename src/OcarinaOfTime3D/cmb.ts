@@ -1,7 +1,7 @@
 
 import { assert, readString } from '../util.js';
 import ArrayBufferSlice from '../ArrayBufferSlice.js';
-import { mat4, vec4 } from 'gl-matrix';
+import { mat4, ReadonlyVec4, vec4 } from 'gl-matrix';
 import { TextureFormat, decodeTexture, computeTextureByteSize, getTextureFormatFromGLFormat } from './pica_texture.js';
 import { GfxCullMode, GfxBlendMode, GfxBlendFactor, GfxMegaStateDescriptor, GfxCompareMode, GfxChannelWriteMask, GfxChannelBlendState, GfxTextureDimension } from '../gfx/platform/GfxPlatform.js';
 import { makeMegaState } from '../gfx/helpers/GfxMegaStateDescriptorHelpers.js';
@@ -11,16 +11,15 @@ import { AnimationKeyframeHermite, sampleAnimationTrack,} from './csab.js';
 import { clamp } from '../MathHelpers.js';
 
 export interface VatrChunk {
-    dataBuffer: ArrayBufferSlice;
-    positionByteOffset: number;
-    colorByteOffset: number;
-    normalByteOffset: number;
-    tangentByteOffset: number;
-    texCoord0ByteOffset: number;
-    texCoord1ByteOffset: number;
-    texCoord2ByteOffset: number;
-    boneIndicesByteOffset: number;
-    boneWeightsByteOffset: number;
+    position: ArrayBufferSlice;
+    color: ArrayBufferSlice;
+    normal: ArrayBufferSlice;
+    tangent: ArrayBufferSlice | null;
+    texCoord0: ArrayBufferSlice;
+    texCoord1: ArrayBufferSlice;
+    texCoord2: ArrayBufferSlice;
+    boneIndices: ArrayBufferSlice;
+    boneWeights: ArrayBufferSlice;
 }
 
 export const enum Version {
@@ -196,13 +195,13 @@ export const enum LutInput {
     CosPhi         = 0x62A5
 }
 
-export const enum TextureTransformType{
+export const enum TextureTransformType {
     DccMaya,
     DccSoftImage,
     Dcc3dsMax
 }
 
-export const enum TexCoordConfig{
+export const enum TexCoordConfig {
     Config0120,
     Config0110,
     Config0111,
@@ -342,7 +341,7 @@ function translateBumpTexture(bumpTexture: number): number {
 function translateCullModeFlags(cullModeFlags: number): GfxCullMode {
     switch (cullModeFlags) {
     case 0x00:
-        return GfxCullMode.FrontAndBack;
+        throw "whoops";
     case 0x01:
         return GfxCullMode.Back;
     case 0x02:
@@ -424,7 +423,6 @@ function readMatsChunk(cmb: CMB, buffer: ArrayBufferSlice) {
         let coordinatorsOffs = offs + 0x58;
         const textureCoordinators: TextureCoordinator[] = [];
         for (let j = 0; j < 3; j++) {
-            // TODO(jstpierre): Unsure about how these are packed...
             const sourceCoordinate = view.getUint8(coordinatorsOffs + 0x00);
             const referenceCamera = view.getUint8(coordinatorsOffs + 0x01);
             const mappingMethod: TextureCoordinatorMappingMethod = view.getUint8(coordinatorsOffs + 0x02);
@@ -579,7 +577,7 @@ function readMatsChunk(cmb: CMB, buffer: ArrayBufferSlice) {
             blendDstFactor: blendDstFactorRGB,
             blendSrcFactor: blendSrcFactorRGB,
         };
-        // TODO(jstpierre): What is at 0x142? Logic op?
+        // TODO(jstpierre): What is at 0x142? More logic op things?
         const blendSrcFactorAlpha: GfxBlendFactor = blendEnabled ? view.getUint16(offs + 0x144, true) : GfxBlendFactor.One;
         const blendDstFactorAlpha: GfxBlendFactor = blendEnabled ? view.getUint16(offs + 0x146, true) : GfxBlendFactor.Zero;
         const blendFunctionAlpha: GfxBlendMode = blendEnabled ? view.getUint16(offs + 0x148, true) : GfxBlendMode.Add;
@@ -588,11 +586,42 @@ function readMatsChunk(cmb: CMB, buffer: ArrayBufferSlice) {
             blendDstFactor: blendDstFactorAlpha,
             blendSrcFactor: blendSrcFactorAlpha,
         };
+
+        const factorUsesBlendConstantAlpha = (v: GLenum) => {
+            return v === WebGL2RenderingContext.CONSTANT_ALPHA || v === WebGL2RenderingContext.ONE_MINUS_CONSTANT_ALPHA;
+        };
+
+        const factorUsesBlendConstantColor = (v: GLenum) => {
+            return v === WebGL2RenderingContext.CONSTANT_COLOR || v === WebGL2RenderingContext.ONE_MINUS_CONSTANT_COLOR;
+        };
+
+        const translateBlendFactor = (v: GLenum): GfxBlendFactor => {
+            if (v === WebGL2RenderingContext.CONSTANT_ALPHA)
+                return GfxBlendFactor.ConstantColor;
+            else if (v === WebGL2RenderingContext.ONE_MINUS_CONSTANT_ALPHA)
+                return GfxBlendFactor.OneMinusConstantColor;
+            else
+                return v as GfxBlendFactor;
+        };
+
+        // Ensure we're not using blend constants in two different contexts.
+        const usesBlendConstantAlpha = factorUsesBlendConstantAlpha(blendSrcFactorRGB) || factorUsesBlendConstantAlpha(blendDstFactorRGB) || factorUsesBlendConstantAlpha(blendSrcFactorAlpha) || factorUsesBlendConstantAlpha(blendDstFactorAlpha);
+        const usesBlendConstantColor = factorUsesBlendConstantColor(blendSrcFactorRGB) || factorUsesBlendConstantColor(blendDstFactorRGB) || factorUsesBlendConstantColor(blendSrcFactorAlpha) || factorUsesBlendConstantColor(blendDstFactorAlpha);
+
         const blendColorR = view.getFloat32(offs + 0x14C, true);
         const blendColorG = view.getFloat32(offs + 0x150, true);
         const blendColorB = view.getFloat32(offs + 0x154, true);
         const blendColorA = view.getFloat32(offs + 0x158, true);
         const blendConstant = colorNewFromRGBA(blendColorR, blendColorG, blendColorB, blendColorA);
+
+        if (usesBlendConstantAlpha) {
+            assert(!usesBlendConstantColor);
+            blendConstant.r = blendConstant.g = blendConstant.b = blendConstant.a;
+            rgbBlendState.blendSrcFactor = translateBlendFactor(rgbBlendState.blendSrcFactor);
+            rgbBlendState.blendDstFactor = translateBlendFactor(rgbBlendState.blendDstFactor);
+            alphaBlendState.blendSrcFactor = translateBlendFactor(alphaBlendState.blendSrcFactor);
+            alphaBlendState.blendDstFactor = translateBlendFactor(alphaBlendState.blendDstFactor);
+        }
 
         const isTransparent = blendEnabled;
         const renderFlags = makeMegaState({
@@ -644,7 +673,7 @@ export interface Texture {
     levels: TextureLevel[];
 }
 
-export function parseTexChunk(buffer: ArrayBufferSlice, texData: ArrayBufferSlice | null, cmbName: string = ''): Texture[] {
+export function parseTexChunk(buffer: ArrayBufferSlice, texData: ArrayBufferSlice | null): Texture[] {
     const view = buffer.createDataView();
 
     assert(readString(buffer, 0x00, 0x04) === 'tex ');
@@ -664,9 +693,7 @@ export function parseTexChunk(buffer: ArrayBufferSlice, texData: ArrayBufferSlic
         const glFormat = view.getUint32(offs + 0x0C, true);
         let dataOffs = view.getUint32(offs + 0x10, true);
         let dataEnd = dataOffs + size;
-        const texName = readString(buffer, offs + 0x14, 0x10);
-        // TODO(jstpierre): Maybe find another way to dedupe? Name seems inconsistent.
-        const name = `${cmbName}/${i}/${texName}`;
+        const name = readString(buffer, offs + 0x14, 0x10);
         offs += 0x24;
 
         const levels: TextureLevel[] = [];
@@ -723,7 +750,7 @@ export function parseTexChunk(buffer: ArrayBufferSlice, texData: ArrayBufferSlic
 }
 
 function readTexChunk(cmb: CMB, buffer: ArrayBufferSlice, texData: ArrayBufferSlice | null): void {
-    cmb.textures = parseTexChunk(buffer, texData, cmb.name);
+    cmb.textures = parseTexChunk(buffer, texData);
 }
 
 function readLutsChunk(cmb: CMB, buffer: ArrayBufferSlice): void {
@@ -804,48 +831,40 @@ function readVatrChunk(cmb: CMB, buffer: ArrayBufferSlice): void {
     assert(readString(buffer, 0x00, 0x04) === 'vatr');
     const fullBufferSize = view.getUint32(0x04, true);
 
-    let idx = 0x0C;
-
-    function readSlice(baseOffs: number = 0): number {
+    function readSlice(): ArrayBufferSlice {
         const size = view.getUint32(idx + 0x00, true);
         const offs = view.getUint32(idx + 0x04, true);
         idx += 0x08;
 
-        if (size === 0)
-            return -1;
-        else
-            return offs - baseOffs;
+        return buffer.subarray(offs, size);
     }
 
-    const baseOffs = readSlice();
-    const dataBuffer = buffer.slice(baseOffs, fullBufferSize);
+    let idx = 0x0C;
+    const position = readSlice();
+    const normal = readSlice();
 
-    const positionByteOffset = 0;
-    const normalByteOffset = readSlice(baseOffs);
-
-    let tangentByteOffset = 0;
+    let tangent: ArrayBufferSlice | null = null;
     if (cmb.version > Version.Ocarina)
-        tangentByteOffset = readSlice(baseOffs);
+        tangent = readSlice();
 
-    const colorByteOffset = readSlice(baseOffs);
-    const texCoord0ByteOffset = readSlice(baseOffs);
-    const texCoord1ByteOffset = readSlice(baseOffs);
-    const texCoord2ByteOffset = readSlice(baseOffs);
+    const color = readSlice();
+    const texCoord0 = readSlice();
+    const texCoord1 = readSlice();
+    const texCoord2 = readSlice();
 
-    const boneIndicesByteOffset = readSlice(baseOffs);
-    const boneWeightsByteOffset = readSlice(baseOffs);
+    const boneIndices = readSlice();
+    const boneWeights = readSlice();
 
     cmb.vatrChunk = {
-        dataBuffer,
-        positionByteOffset,
-        normalByteOffset,
-        tangentByteOffset,
-        colorByteOffset,
-        texCoord0ByteOffset,
-        texCoord1ByteOffset,
-        texCoord2ByteOffset,
-        boneIndicesByteOffset,
-        boneWeightsByteOffset,
+        position,
+        normal,
+        tangent,
+        color,
+        texCoord0,
+        texCoord1,
+        texCoord2,
+        boneIndices,
+        boneWeights,
     };
 }
 
@@ -913,9 +932,9 @@ function readPrmChunk(cmb: CMB, buffer: ArrayBufferSlice): Prm {
 }
 
 export const enum SkinningMode {
-    SINGLE_BONE = 0x00,
-    RIGID_SKINNING = 0x01,
-    SMOOTH_SKINNING = 0x02,
+    SingleBone = 0x00,
+    RigidSkinning = 0x01,
+    SmoothSkinning = 0x02,
 }
 
 // "Primitive Set"
@@ -964,21 +983,21 @@ export interface SepdVertexAttrib {
     start: number;
     scale: number;
     dataType: DataType;
-    constant: vec4;
+    constant: ReadonlyVec4;
 }
 
 export class Sepd {
     public prms: Prms[] = [];
 
-    public position!: SepdVertexAttrib;
-    public normal!: SepdVertexAttrib;
+    public position: SepdVertexAttrib;
+    public normal: SepdVertexAttrib;
     public tangent: SepdVertexAttrib | null = null;
-    public color!: SepdVertexAttrib;
-    public texCoord0!: SepdVertexAttrib;
-    public texCoord1!: SepdVertexAttrib;
-    public texCoord2!: SepdVertexAttrib;
-    public boneIndices!: SepdVertexAttrib;
-    public boneWeights!: SepdVertexAttrib;
+    public color: SepdVertexAttrib;
+    public texCoord0: SepdVertexAttrib;
+    public texCoord1: SepdVertexAttrib;
+    public texCoord2: SepdVertexAttrib;
+    public boneIndices: SepdVertexAttrib;
+    public boneWeights: SepdVertexAttrib;
 
     public boneDimension: number;
     public hasVertexColors: boolean;
@@ -1047,8 +1066,6 @@ function readSepdChunk(cmb: CMB, buffer: ArrayBufferSlice): Sepd {
     sepd.texCoord2 = readVertexAttrib();
     sepd.boneIndices = readVertexAttrib();
     sepd.boneWeights = readVertexAttrib();
-
-    // take you to the next dimension, the
     sepd.boneDimension = view.getUint16(sepdArrIdx + 0x00, true);
 
     sepdArrIdx += 0x04;

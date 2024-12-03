@@ -1,7 +1,8 @@
 import * as BIN from "./bin.js";
 import * as Viewer from '../viewer.js';
+import * as UI from '../ui.js';
 import { makeBackbufferDescSimple, makeAttachmentClearDescriptor, standardFullClearRenderPassDescriptor } from '../gfx/helpers/RenderGraphHelpers.js';
-import { fillMatrix4x3, fillMatrix4x4 } from '../gfx/helpers/UniformBufferHelpers.js';
+import { fillMatrix4x3, fillMatrix4x4, fillVec3v, fillVec4 } from '../gfx/helpers/UniformBufferHelpers.js';
 import { GfxBindingLayoutDescriptor, GfxDevice, GfxTexture } from "../gfx/platform/GfxPlatform.js";
 import { GfxRenderHelper } from '../gfx/render/GfxRenderHelper.js';
 import { SceneContext } from '../SceneBase.js';
@@ -9,16 +10,64 @@ import { FakeTextureHolder } from '../TextureHolder.js';
 import { hexzero, nArray } from '../util.js';
 import { applyEffect, FFXProgram, findTextureIndex, LevelModelData, LevelPartInstance, TextureData } from "./render.js";
 import { CameraController } from "../Camera.js";
-import { mat4 } from "gl-matrix";
+import { mat4, vec3 } from "gl-matrix";
 import AnimationController from "../AnimationController.js";
 import { NamedArrayBufferSlice } from "../DataFetcher.js";
 import { activateEffect, EventScript, LevelObjectHolder } from "./script.js";
 import { GfxrAttachmentSlot } from "../gfx/render/GfxRenderGraph.js";
 import { GfxRenderInstList } from "../gfx/render/GfxRenderInstManager.js";
+import { Color, Cyan, Magenta, colorNewFromRGBA } from "../Color.js";
+import { DebugDrawFlags } from "../gfx/helpers/DebugDraw.js";
+import { Vec3UnitX, Vec3UnitZ } from "../MathHelpers.js";
+import { drawWorldSpaceText, getDebugOverlayCanvas2D } from "../DebugJunk.js";
 
 const pathBase = `FinalFantasyX`;
 
 const bindingLayouts: GfxBindingLayoutDescriptor[] = [{ numUniformBuffers: 2, numSamplers: 1 }];
+
+const mapScratch = nArray(3, () => vec3.create());
+
+function mapColor(dst: Color, mode: number, tri: BIN.MapTri): boolean {
+    dst.r = 1;
+    dst.g = 1;
+    dst.b = 1;
+    if (mode === 1) {
+        const val = tri.passability;
+        if (val === 1) { // totally blocked
+            dst.r = 1;
+            dst.g = .3;
+            dst.b = .3;
+        } else if (val === 0xE) { // blocked for player
+            dst.r = .2;
+            dst.g = 1;
+            dst.b = 1;
+        } else if (val >= 0x30) { // controlled by script
+            dst.r = 1;
+            dst.g = .2;
+            dst.b = 1;
+        } else {
+            return false;
+        }
+    } else if (mode === 2) {
+        const val = tri.encounter;
+        if (val === 1) { // totally blocked
+            dst.r = 1;
+            dst.g = .5;
+            dst.b = .5;
+        } else if (val === 2) { // blocked for player
+            dst.r = .5;
+            dst.g = 1;
+            dst.b = .5;
+        } else if (val === 3) { // controlled by script
+            dst.r = .5;
+            dst.g = .5;
+            dst.b = 1;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
 
 class FFXRenderer implements Viewer.SceneGfx {
     public renderHelper: GfxRenderHelper;
@@ -36,16 +85,21 @@ class FFXRenderer implements Viewer.SceneGfx {
     private animationController = new AnimationController(60);
     public script: EventScript | null = null;
 
+    private collisionMode = 0;
+    private showTriggers = false;
+    private debug = false;
+
     constructor(device: GfxDevice, public levelObjects: LevelObjectHolder) {
         this.renderHelper = new GfxRenderHelper(device);
     }
 
     public adjustCameraController(c: CameraController) {
-        c.setSceneMoveSpeedMult(.003);
+        c.setSceneMoveSpeedMult(.03);
     }
 
     public render(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput) {
         const renderInstManager = this.renderHelper.renderInstManager;
+        this.renderHelper.debugDraw.beginFrame(viewerInput.camera.projectionMatrix, viewerInput.camera.viewMatrix, viewerInput.backbufferHeight, viewerInput.backbufferHeight);
 
         const builder = this.renderHelper.renderGraph.newGraphBuilder();
 
@@ -62,6 +116,7 @@ class FFXRenderer implements Viewer.SceneGfx {
                 this.renderInstListMain.drawOnPassRenderer(this.renderHelper.renderCache, passRenderer);
             });
         });
+        this.renderHelper.debugDraw.pushPasses(builder, mainColorTargetID, mainDepthTargetID);
         this.renderHelper.antialiasingSupport.pushPasses(builder, viewerInput, mainColorTargetID);
         builder.resolveRenderTargetToExternalTexture(mainColorTargetID, viewerInput.onscreenTexture);
 
@@ -71,20 +126,27 @@ class FFXRenderer implements Viewer.SceneGfx {
     }
 
     public prepareToRender(device: GfxDevice, viewerInput: Viewer.ViewerRenderInput): void {
-        viewerInput.camera.setClipPlanes(.1);
         this.animationController.setTimeFromViewerInput(viewerInput);
 
         if (this.script)
             this.script.update(viewerInput.deltaTime * 60 / 1000);
 
         const template = this.renderHelper.pushTemplateRenderInst();
+        if (this.levelObjects.renderHacks.wireframe)
+            template.setMegaStateFlags({wireframe: true});
         template.setBindingLayouts(bindingLayouts);
-        let offs = template.allocateUniformBuffer(FFXProgram.ub_SceneParams, 16 + 12);
+        let offs = template.allocateUniformBuffer(FFXProgram.ub_SceneParams, 16 + 12 + 4);
         const sceneParamsMapped = template.mapUniformBufferF32(FFXProgram.ub_SceneParams);
         offs += fillMatrix4x4(sceneParamsMapped, offs, viewerInput.camera.projectionMatrix);
-        fillMatrix4x3(sceneParamsMapped, offs, this.lightDirection);
+        offs += fillMatrix4x3(sceneParamsMapped, offs, this.lightDirection);
+        let hackFlags = 0;
+        if (this.levelObjects.renderHacks.vertexColors)
+            hackFlags |= 1;
+        if (this.levelObjects.renderHacks.textures)
+            hackFlags |= 2;
+        offs += fillVec4(sceneParamsMapped, offs, hackFlags);
 
-        this.renderHelper.renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        this.renderHelper.renderInstManager.setCurrentList(this.renderInstListMain);
 
         for (let i = 0; i < this.levelObjects.activeEffects.length; i++) {
             const effect = this.levelObjects.activeEffects[i];
@@ -118,8 +180,150 @@ class FFXRenderer implements Viewer.SceneGfx {
         for (let i = 0; i < this.levelObjects.parts.length; i++)
             this.levelObjects.parts[i].prepareToRender(this.renderHelper.renderInstManager, viewerInput, this.textureRemaps);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        if (this.collisionMode && this.levelObjects.map) {
+            const vv = this.levelObjects.map.vertices;
+            const tt = this.levelObjects.map.tris;
+            const col = colorNewFromRGBA(1, 1, 1, 1);
+            const opts: { flags: DebugDrawFlags; } = { flags: DebugDrawFlags.DepthTint };
+            this.renderHelper.debugDraw.beginBatchLine(3 * tt.length);
+            for (let i = 0; i < tt.length; i++) {
+                const tri = tt[i];
+                for (let j = 0; j < 3; j++) {
+                    vec3.set(mapScratch[j], vv[4*tri.vertices[j] + 0], -vv[4*tri.vertices[j] + 1], -vv[4*tri.vertices[j] + 2]);
+                    vec3.scale(mapScratch[j], mapScratch[j], 1 / this.levelObjects.map.scale);
+                    mapScratch[j][1] += .05; // poor man's polygon offset
+                }
+
+                // carefully draw every edge once
+                mapColor(col, this.collisionMode, tri);
+                for (let j = 0; j < 3; j++) {
+                    const k = (j + 1) % 3;
+                    if (tri.edges[j] < 0 || tri.vertices[j] < tri.vertices[k])
+                        this.renderHelper.debugDraw.drawLine(mapScratch[j], mapScratch[k], col, col, opts);
+                }
+            }
+            this.renderHelper.debugDraw.endBatch();
+            col.a = .5;
+            for (let i = 0; i < tt.length; i++) {
+                const tri = tt[i];
+                if (mapColor(col, this.collisionMode, tri)) {
+                    for (let j = 0; j < 3; j++) {
+                        vec3.set(mapScratch[j], vv[4*tri.vertices[j] + 0], -vv[4*tri.vertices[j] + 1], -vv[4*tri.vertices[j] + 2]);
+                        vec3.scale(mapScratch[j], mapScratch[j], 1/this.levelObjects.map.scale);
+                        mapScratch[j][1] += .05; // poor man's polygon offset
+                    }
+                    this.renderHelper.debugDraw.drawTriSolidP(mapScratch[0], mapScratch[1], mapScratch[2], col);
+                }
+            }
+        }
+
+        if (this.script && (this.showTriggers || this.debug)) {
+            for (let i = 0; i < this.script.controllers.length; i++) {
+                const c = this.script.controllers[i];
+                vec3.copy(mapScratch[0], c.position.pos);
+                mapScratch[0][1] *= -1;
+                mapScratch[0][2] *= -1;
+                switch (c.spec.type) {
+                    case BIN.ControllerType.EDGE:
+                    case BIN.ControllerType.PLAYER_EDGE:
+                        vec3.copy(mapScratch[1], c.position.miscVec);
+                        mapScratch[1][1] *= -1;
+                        mapScratch[1][2] *= -1;
+                        this.renderHelper.debugDraw.drawLine(mapScratch[0], mapScratch[1], Magenta);
+                        if (this.debug) {
+                            const ctx = getDebugOverlayCanvas2D();
+                            vec3.lerp(mapScratch[0], mapScratch[0], mapScratch[1], .5);
+                            drawWorldSpaceText(ctx, viewerInput.camera.clipFromWorldMatrix, mapScratch[0], `w${hexzero(i, 2)}`, 15*((i % 2) - .5), Magenta);
+                        }
+                        break;
+                    case BIN.ControllerType.ZONE:
+                    case BIN.ControllerType.PLAYER_ZONE:
+                        this.renderHelper.debugDraw.drawRectLineRU(mapScratch[0], Vec3UnitX, Vec3UnitZ,
+                            c.position.miscVec[0], c.position.miscVec[2], Cyan);
+                        if (this.debug) {
+                            const ctx = getDebugOverlayCanvas2D();
+                            mapScratch[0][0] += c.position.miscVec[0];
+                            mapScratch[0][2] += c.position.miscVec[2];
+                            drawWorldSpaceText(ctx, viewerInput.camera.clipFromWorldMatrix, mapScratch[0], `w${hexzero(i, 2)}`, 0, Cyan);
+                        }
+                        break;
+                }
+            }
+        }
+
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
+    }
+
+    private createRenderHacksPanel(): UI.Panel {
+        const renderHacksPanel = new UI.Panel();
+        renderHacksPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
+        renderHacksPanel.setTitle(UI.RENDER_HACKS_ICON, 'Render Hacks');
+
+        const vertexColors = new UI.Checkbox('Vertex Colors', true);
+        vertexColors.onchanged = () => {
+            const v = vertexColors.checked;
+            this.levelObjects.renderHacks.vertexColors = v;
+        };
+        renderHacksPanel.contents.appendChild(vertexColors.elem);
+        const textures = new UI.Checkbox('Textures', true);
+        textures.onchanged = () => {
+            const v = textures.checked;
+            this.levelObjects.renderHacks.textures = v;
+        };
+        renderHacksPanel.contents.appendChild(textures.elem);
+        if (this.renderHelper.device.queryLimits().wireframeSupported) {
+            const wireframe = new UI.Checkbox('Wireframe', false);
+            wireframe.onchanged = () => {
+                const v = wireframe.checked;
+                this.levelObjects.renderHacks.wireframe = v;
+            };
+            renderHacksPanel.contents.appendChild(wireframe.elem);
+        }
+        return renderHacksPanel;
+    }
+
+    public createPanels(): UI.Panel[] {
+        const panels: UI.Panel[] = [];
+        panels.push(this.createLayerPanel());
+        panels.push(this.createRenderHacksPanel());
+        return panels;
+    }
+
+    private createLayerPanel(): UI.Panel {
+        const layersPanel = new UI.Panel();
+        layersPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
+        layersPanel.setTitle(UI.LAYER_ICON, 'Collision');
+        if (this.levelObjects.map) {
+            const map = this.levelObjects.map;
+            const options = ['Off'];
+            if (map.hasCollision)
+                options.push('Collision');
+            if (map.hasBattle)
+                options.push('Battle');
+            if (options.length === 1)
+                options.push('On');
+            const mapRadios = new UI.RadioButtons('Show map mesh', options);
+            mapRadios.onselectedchange = () => {
+                this.collisionMode = mapRadios.selectedIndex;
+                if (!map.hasCollision && this.collisionMode === 1)
+                    this.collisionMode = 2;
+                if (this.collisionMode === 1)
+                    mapRadios.elem.title = "red = blocked; cyan = blocked for player; purple = blocked by script";
+                else
+                    mapRadios.elem.title = "";
+            };
+            mapRadios.setSelectedIndex(0);
+            layersPanel.contents.appendChild(mapRadios.elem);
+        }
+        if (this.script) {
+            const triggerCheckbox = new UI.Checkbox('Show script triggers', false);
+            triggerCheckbox.onchanged = () => {
+                this.showTriggers = triggerCheckbox.checked;
+            };
+            layersPanel.contents.appendChild(triggerCheckbox.elem);
+        }
+        return layersPanel;
     }
 
     public destroy(device: GfxDevice): void {
@@ -131,8 +335,6 @@ class FFXRenderer implements Viewer.SceneGfx {
             this.textureData[i].destroy(device);
     }
 }
-
-
 
 class FFXLevelSceneDesc implements Viewer.SceneDesc {
     public id: string;
@@ -151,19 +353,9 @@ class FFXLevelSceneDesc implements Viewer.SceneDesc {
         const textures = BIN.parseLevelTextures(textureData);
         const level = BIN.parseLevelGeometry(geometryData, textures);
 
-        const levelData: LevelObjectHolder = {
-            parts: [],
-            activeEffects: nArray<BIN.ActiveEffect>(64, () => ({
-                active: false,
-                runOnce: false,
-                startFrame: 0,
-                partIndex: -1,
-                effectIndex: -1,
-            })),
-            effectData: level.effects,
-        };
+        const objects = new LevelObjectHolder(this.index, this.events[0], device, context, level);
 
-        const renderer = new FFXRenderer(device, levelData);
+        const renderer = new FFXRenderer(device, objects);
         const cache = renderer.renderHelper.renderCache;
         renderer.clearPass = makeAttachmentClearDescriptor(level.clearColor);
         mat4.copy(renderer.lightDirection, level.lightDirection);
@@ -184,13 +376,13 @@ class FFXLevelSceneDesc implements Viewer.SceneDesc {
             }
             const partRenderer = new LevelPartInstance(device, cache, p, modelData, renderer.textureData);
             for (let index of p.effectIndices)
-                activateEffect(levelData, levelData.parts.length, index, false);
-            levelData.parts.push(partRenderer);
+                activateEffect(objects, objects.parts.length, index, false);
+            objects.parts.push(partRenderer);
         }
 
         if (eventData) {
             const script = BIN.parseEvent(eventData);
-            renderer.script = new EventScript(script, levelData);
+            renderer.script = new EventScript(script, objects);
             renderer.script.update(0); // run controller init code
         }
 
@@ -431,7 +623,7 @@ const sceneDescs = [
     new FFXLevelSceneDesc(352, "Sanubia Desert - Central", [0x09A2]),
     new FFXLevelSceneDesc(353, "Sanubia Desert - West", [0x09B4]),
     "Al Bhed Home",
-    // new FFXLevelSceneDesc(354, "Home", [0x0924]),
+    new FFXLevelSceneDesc(354, "Home", [0x0924]),
     new FFXLevelSceneDesc(360, "Home - Entrance", [0x1368]),
     new FFXLevelSceneDesc(363, "Home - Main Corridor", [0x13B0]),
     new FFXLevelSceneDesc(364, "Home - Environment Controls", [0x0F66]),
@@ -513,12 +705,12 @@ const sceneDescs = [
     // new FFXLevelSceneDesc(506, "Dome - Front", [0x1626]),
     new FFXLevelSceneDesc(515, "Dome - Interior", [0x0F9C]),
     new FFXLevelSceneDesc(516, "Dome - Corridor", [0x1638]),
+    new FFXLevelSceneDesc(522, "Dome - Trials", [0x1680]),
     new FFXLevelSceneDesc(517, "Dome - Cloister of Trials", [0x164A]),
     new FFXLevelSceneDesc(518, "Dome - Chamber of the Fayth", [0x165C]),
     new FFXLevelSceneDesc(519, "Dome - Great Hall", [0x0FC0]),
     new FFXLevelSceneDesc(520, "Dome - Great Hall (ruins)", [0x166E]),
     new FFXLevelSceneDesc(521, "Dome - The Beyond", [0x12FC]),
-    new FFXLevelSceneDesc(522, "Dome - Trials", [0x1680]),
     "Fighting Sin",
     new FFXLevelSceneDesc(565, "Airship - Deck", [0x0DFE]),
     // new FFXLevelSceneDesc(566, "Airship - Deck", [0x0E10]), identical

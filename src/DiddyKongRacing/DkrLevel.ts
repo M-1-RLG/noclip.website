@@ -108,7 +108,6 @@ export class DkrLevel {
         const camera = viewerInput.camera;
 
         viewerInput.camera.worldMatrix[12] = -viewerInput.camera.worldMatrix[12];
-        mat4.invert(camera.viewMatrix, camera.worldMatrix);
         camera.worldMatrixUpdated();
 
         this.cameraInMirrorMode = DkrControlGlobals.ADV2_MIRROR.on;
@@ -117,7 +116,7 @@ export class DkrLevel {
     private previousChannel = -1;
 
     public prepareToRender(device: GfxDevice, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
 
         // Set scene parameters
         let offs = template.allocateUniformBuffer(F3DDKR_Program.ub_SceneParams, 16);
@@ -209,7 +208,7 @@ export class DkrLevel {
             this.sprites.prepareToRender(device, renderInstManager, viewerInput, SPRITE_LAYER_TRANSPARENT);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
 
         this.sprites.advanceTime(viewerInput);
     }

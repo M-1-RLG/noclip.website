@@ -202,17 +202,71 @@ export class BaseEntity {
     }
 
     public shouldDraw(): boolean {
-        return this.visible && this.enabled && this.alive && this.spawnState === SpawnState.Spawned;
+        if (!this.visible || !this.enabled || !this.alive || this.spawnState !== SpawnState.Spawned)
+            return false;
+
+        return true;
     }
 
-    public checkFrustum(renderContext: SourceRenderContext): boolean {
+    public getLocalRenderBounds(dst: AABB): boolean {
         if (this.modelStudio !== null) {
-            return this.modelStudio.checkFrustum(renderContext);
+            if (this.seqindex !== -1) {
+                const seq = this.modelStudio.modelData.seq[this.seqindex];
+                if (seq !== undefined)
+                    dst.union(this.modelStudio.modelData.viewBB, seq.viewBB);
+            } else {
+                dst.copy(this.modelStudio.modelData.viewBB);
+            }
+            return true;
         } else if (this.modelBSP !== null) {
-            return this.modelBSP.checkFrustum(renderContext);
+            dst.copy(this.modelBSP.model.bbox);
+            return true;
         } else {
-            // TODO(jstpierre): Do what here?
             return false;
+        }
+    }
+
+    public getRenderBounds(dst: AABB): boolean {
+        if (this.getLocalRenderBounds(dst)) {
+            dst.transform(dst, this.modelMatrix);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    protected checkFrustum(renderContext: SourceRenderContext): boolean {
+        if (this.getRenderBounds(scratchAABB)) {
+            return renderContext.currentView.frustum.contains(scratchAABB);
+        } else {
+            // No render bounds, don't bother.
+            assert(false);
+            return true;
+        }
+    }
+
+    public checkVisible(renderContext: SourceRenderContext): boolean {
+        if (!this.shouldDraw())
+            return false;
+
+        if (this.getRenderBounds(scratchAABB)) {
+            if (!renderContext.currentView.frustum.contains(scratchAABB))
+                return false;
+
+            const bsp = this.bspRenderer.bsp, pvs = renderContext.currentView.pvs;
+            let visible = false;
+            bsp.queryAABB(scratchAABB, (leaf) => {
+                if (pvs.getBit(leaf.cluster)) {
+                    visible = true;
+                    return false; // can stop here
+                }
+
+                return true; // keep going
+            });
+            return visible;
+        } else {
+            // Entity doesn't have render bounds, e.g. particle effects and such.
+            return true;
         }
     }
 
@@ -221,7 +275,8 @@ export class BaseEntity {
         return this.modelStudio!.modelData.seq.findIndex((seq) => seq.label === label);
     }
 
-    private playseqindex(index: number): void {
+    // TODO(jstpierre): Move all this to a baseanimation type class?
+    private playSequenceIndex(index: number): void {
         if (index < 0) {
             index = 0;
         }
@@ -232,7 +287,7 @@ export class BaseEntity {
     }
 
     public resetSequence(label: string): void {
-        this.playseqindex(this.findSequenceLabel(label));
+        this.playSequenceIndex(this.findSequenceLabel(label));
     }
 
     public spawn(entitySystem: EntitySystem): void {
@@ -241,7 +296,7 @@ export class BaseEntity {
 
         if (this.entity.defaultanim) {
             this.seqdefaultindex = this.findSequenceLabel(this.entity.defaultanim);
-            this.playseqindex(this.seqdefaultindex);
+            this.playSequenceIndex(this.seqdefaultindex);
         }
 
         this.spawnState = SpawnState.Spawned;
@@ -350,9 +405,6 @@ export class BaseEntity {
     }
 
     public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager): void {
-        if (!this.shouldDraw())
-            return;
-
         if (this.materialParams !== null)
             colorCopy(this.materialParams.blendColor, this.rendercolor, this.renderamt);
 
@@ -520,7 +572,7 @@ export class BaseEntity {
 
                 // Pass to default animation if we're through.
                 if (this.seqdefaultindex >= 0 && this.modelStudio.sequenceIsFinished(this.seqindex, this.seqtime) && !this.holdAnimation)
-                    this.playseqindex(this.seqdefaultindex);
+                    this.playSequenceIndex(this.seqdefaultindex);
 
                 // Handle events.
                 const seq = this.modelStudio.modelData.seq[this.seqindex];
@@ -538,15 +590,8 @@ export class BaseEntity {
         }
 
         if ((this as any).debugDraw) {
-            let aabb: AABB | null = null;
-            if (this.modelBSP !== null)
-                aabb = this.modelBSP.model.bbox;
-            else if (this.modelStudio !== null)
-                aabb = this.modelStudio.modelData.viewBB;
-
-            if (aabb !== null) {
-                drawWorldSpaceAABB(getDebugOverlayCanvas2D(), renderContext.currentView.clipFromWorldMatrix, aabb, this.modelMatrix);
-            }
+            if (this.getLocalRenderBounds(scratchAABB))
+                drawWorldSpaceAABB(getDebugOverlayCanvas2D(), renderContext.currentView.clipFromWorldMatrix, scratchAABB, this.modelMatrix);
 
             this.getAbsOrigin(scratchVec3a);
             drawWorldSpaceLocator(getDebugOverlayCanvas2D(), renderContext.currentView.clipFromWorldMatrix, scratchVec3a);
@@ -642,7 +687,7 @@ export class BaseEntity {
         if (this.modelStudio === null)
             return;
 
-        this.playseqindex(this.findSequenceLabel(value));
+        this.playSequenceIndex(this.findSequenceLabel(value));
     }
 
     private input_setdefaultanimation(entitySystem: EntitySystem, activator: BaseEntity, value: string): void {
@@ -797,7 +842,7 @@ export class sky_camera extends BaseEntity {
 
     constructor(entitySystem: EntitySystem, renderContext: SourceRenderContext, bspRenderer: BSPRenderer, entity: BSPEntity) {
         super(entitySystem, renderContext, bspRenderer, entity);
-        const leaf = assertExists(bspRenderer.bsp.findLeafForPoint(this.localOrigin));
+        const leaf = assertExists(bspRenderer.bsp.queryPoint(this.localOrigin));
         this.area = leaf.area;
         this.scale = Number(entity.scale);
         computeModelMatrixSRT(this.modelMatrix, this.scale, this.scale, this.scale, 0, 0, 0,
@@ -2641,7 +2686,7 @@ class material_modify_control extends BaseEntity {
 class info_overlay_accessor extends BaseEntity {
     public static classname = `info_overlay_accessor`;
     private overlaySurfaces: BSPSurfaceRenderer[];
-    private needsMaterialInit: (BSPSurfaceRenderer | null)[] | null = null;
+    private needsMaterialInit: BSPSurfaceRenderer[] | null = null;
 
     constructor(entitySystem: EntitySystem, renderContext: SourceRenderContext, bspRenderer: BSPRenderer, entity: BSPEntity) {
         super(entitySystem, renderContext, bspRenderer, entity);
@@ -3893,7 +3938,7 @@ export class point_camera extends BaseEntity {
         super(entitySystem, renderContext, bspRenderer, entity);
 
         this.fovY = Number(this.entity.fov);
-        this.useScreenAspectRatio = fallbackUndefined(this.entity.usescreenaspectratio, '1') !== '0';
+        this.useScreenAspectRatio = fallbackUndefined(this.entity.usescreenaspectratio, '0') !== '0';
 
         this.viewRenderer.pvsFallback = false;
         this.viewRenderer.renderObjectMask &= ~(RenderObjectKind.DetailProps);
@@ -4173,7 +4218,7 @@ export class EntityFactoryRegistry {
         this.registerFactory(func_monitor);
         this.registerFactory(info_camera_link);
         this.registerFactory(info_player_start);
-        this.registerFactory(info_particle_system);
+        // this.registerFactory(info_particle_system);
         this.registerFactory(path_track);
     }
 

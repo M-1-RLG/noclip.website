@@ -1,7 +1,7 @@
 
-import { GfxAttachmentState, GfxBindingLayoutDescriptor, GfxBindingsDescriptor, GfxBlendFactor, GfxBlendMode, GfxBufferBinding, GfxBufferFrequencyHint, GfxBufferUsage, GfxChannelBlendState, GfxChannelWriteMask, GfxClipSpaceNearZ, GfxCompareMode, GfxComputePass, GfxComputePipelineDescriptor, GfxComputeProgramDescriptor, GfxCullMode, GfxStatisticsGroup, GfxDevice, GfxDeviceLimits, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, GfxInputLayoutDescriptor, GfxMegaStateDescriptor, GfxMipFilterMode, GfxPass, GfxPlatformFramebuffer, GfxPrimitiveTopology, GfxProgramDescriptor, GfxProgramDescriptorSimple, GfxQueryPoolType, GfxRenderPass, GfxRenderPassDescriptor, GfxRenderPipelineDescriptor, GfxRenderTargetDescriptor, GfxSamplerBinding, GfxSamplerDescriptor, GfxSamplerFormatKind, GfxSwapChain, GfxTexFilterMode, GfxTextureDescriptor, GfxTextureDimension, GfxTextureUsage, GfxVendorInfo, GfxVertexAttributeDescriptor, GfxVertexBufferDescriptor, GfxVertexBufferFrequency, GfxViewportOrigin, GfxWrapMode, GfxRenderAttachmentView, GfxRenderPassAttachmentColor, GfxRenderPassAttachment, GfxRenderPassAttachmentDepthStencil } from './GfxPlatform.js';
+import { GfxAttachmentState, GfxBindingLayoutDescriptor, GfxBindingsDescriptor, GfxBlendFactor, GfxBlendMode, GfxBufferBinding, GfxBufferFrequencyHint, GfxBufferUsage, GfxChannelBlendState, GfxChannelWriteMask, GfxClipSpaceNearZ, GfxCompareMode, GfxComputePass, GfxComputePipelineDescriptor, GfxComputeProgramDescriptor, GfxCullMode, GfxStatisticsGroup, GfxDevice, GfxDeviceLimits, GfxIndexBufferDescriptor, GfxInputLayoutBufferDescriptor, GfxInputLayoutDescriptor, GfxMegaStateDescriptor, GfxMipFilterMode, GfxPass, GfxPlatformFramebuffer, GfxPrimitiveTopology, GfxRenderProgramDescriptor, GfxQueryPoolType, GfxRenderPass, GfxRenderPassDescriptor, GfxRenderPipelineDescriptor, GfxRenderTargetDescriptor, GfxSamplerBinding, GfxSamplerDescriptor, GfxSamplerFormatKind, GfxSwapChain, GfxTexFilterMode, GfxTextureDescriptor, GfxTextureDimension, GfxTextureUsage, GfxVendorInfo, GfxVertexAttributeDescriptor, GfxVertexBufferDescriptor, GfxVertexBufferFrequency, GfxViewportOrigin, GfxWrapMode, GfxRenderAttachmentView, GfxRenderPassAttachmentColor, GfxRenderPassAttachment, GfxRenderPassAttachmentDepthStencil } from './GfxPlatform.js';
 import { FormatCompFlags, FormatFlags, FormatTypeFlags, GfxFormat, getFormatByteSize, getFormatCompByteSize, getFormatCompFlags, getFormatFlags, getFormatSamplerKind, getFormatTypeFlags } from "./GfxPlatformFormat.js";
-import { GfxBindings, GfxBuffer, GfxComputePipeline, GfxInputLayout, GfxProgram, GfxQueryPool, GfxReadback, GfxRenderPipeline, GfxRenderTarget, GfxResource, GfxSampler, GfxTexture, GfxTextureImpl, _T, defaultBindingLayoutSamplerDescriptor } from "./GfxPlatformImpl.js";
+import { GfxBindings, GfxBuffer, GfxComputePipeline, GfxInputLayout, GfxProgram, GfxQueryPool, GfxReadback, GfxRenderPipeline, GfxRenderTarget, GfxResource, GfxSampler, GfxTexture, GfxTextureImpl, _T, defaultBindingLayoutSamplerDescriptor, isFormatSamplerKindCompatible } from "./GfxPlatformImpl.js";
 
 import { copyAttachmentState, copyMegaState, defaultMegaState } from '../helpers/GfxMegaStateDescriptorHelpers.js';
 import { assert, assertExists, leftPad, nArray, nullify } from './GfxPlatformUtil.js';
@@ -51,7 +51,7 @@ interface GfxProgramP_GL extends GfxProgram {
     gl_shader_vert: WebGLShader | null;
     gl_shader_frag: WebGLShader | null;
     compileState: GfxProgramCompileStateP_GL;
-    descriptor: GfxProgramDescriptorSimple;
+    descriptor: GfxRenderProgramDescriptor;
 }
 
 interface GfxBindingsP_GL extends GfxBindings {
@@ -251,6 +251,8 @@ function translatePrimitiveTopology(topology: GfxPrimitiveTopology): GLenum {
     switch (topology) {
     case GfxPrimitiveTopology.Triangles:
         return WebGL2RenderingContext.TRIANGLES;
+    case GfxPrimitiveTopology.Lines:
+        return WebGL2RenderingContext.LINES;
     default:
         throw new Error("Unknown primitive topology mode");
     }
@@ -419,6 +421,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     private _WEBGL_compressed_texture_s3tc_srgb: WEBGL_compressed_texture_s3tc_srgb | null = null;
     private _EXT_clip_control: EXT_clip_control | null = null;
     private _EXT_texture_compression_rgtc: EXT_texture_compression_rgtc | null = null;
+    private _EXT_texture_compression_bptc: EXT_texture_compression_bptc | null = null;
     private _EXT_texture_filter_anisotropic: EXT_texture_filter_anisotropic | null = null;
     private _EXT_texture_norm16: EXT_texture_norm16 | null = null;
     private _KHR_parallel_shader_compile: KHR_parallel_shader_compile | null = null;
@@ -489,6 +492,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
     // GfxLimits
     private _uniformBufferMaxPageByteSize: number;
+    private _invalidateFramebufferBroken: boolean = false;
     public uniformBufferWordAlignment: number;
     public uniformBufferMaxPageWordSize: number;
     public supportedSampleCounts: number[];
@@ -501,10 +505,9 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
         this._WEBGL_compressed_texture_s3tc = gl.getExtension('WEBGL_compressed_texture_s3tc');
         this._WEBGL_compressed_texture_s3tc_srgb = gl.getExtension('WEBGL_compressed_texture_s3tc_srgb');
-        // https://github.com/magcius/noclip.website/issues/683
-        // https://issues.chromium.org/issues/347197920
-        // this._EXT_clip_control = gl.getExtension('EXT_clip_control');
+        this._EXT_clip_control = gl.getExtension('EXT_clip_control');
         this._EXT_texture_compression_rgtc = gl.getExtension('EXT_texture_compression_rgtc');
+        this._EXT_texture_compression_bptc = gl.getExtension('EXT_texture_compression_bptc');
         this._EXT_texture_filter_anisotropic = gl.getExtension('EXT_texture_filter_anisotropic');
         this._EXT_texture_norm16 = gl.getExtension('EXT_texture_norm16');
         this._KHR_parallel_shader_compile = gl.getExtension('KHR_parallel_shader_compile');
@@ -557,6 +560,8 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         this._currentMegaState.depthCompare = GfxCompareMode.Less;
         this._currentMegaState.depthWrite = false;
         this._currentMegaState.attachmentsState[0].channelWriteMask = GfxChannelWriteMask.AllChannels;
+        for (let i = 1; i < 4; i++)
+            this._currentMegaState.attachmentsState[i] = copyAttachmentState(undefined, this._currentMegaState.attachmentsState[0]);
 
         // We always have depth & stencil test enabled.
         gl.enable(gl.DEPTH_TEST);
@@ -603,11 +608,21 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
     }
 
     private _checkForBugQuirks(): void {
+        const gl = this.gl;
+
         if (navigator.userAgent.includes('Firefox')) {
             // TODO(jstpierre): File Bugzilla bug, check Firefox version.
             // getQueryParameter on Firefox causes a full GL command buffer sync
             // (verified with private correspondence with Kelsey Gilbert).
             this.occlusionQueriesRecommended = false;
+        }
+
+        const WEBGL_debug_renderer_info = gl.getExtension('WEBGL_debug_renderer_info');
+        if (WEBGL_debug_renderer_info !== null) {
+            const vendor = gl.getParameter(WEBGL_debug_renderer_info.UNMASKED_VENDOR_WEBGL);
+            // https://bugs.webkit.org/show_bug.cgi?id=280799
+            if (vendor === "Apple Inc.")
+                this._invalidateFramebufferBroken = true;
         }
     }
 
@@ -704,6 +719,14 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
             return this._EXT_texture_compression_rgtc!.COMPRESSED_RED_GREEN_RGTC2_EXT;
         case GfxFormat.BC5_SNORM:
             return this._EXT_texture_compression_rgtc!.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;
+        case GfxFormat.BC6H_UNORM:
+            return this._EXT_texture_compression_bptc!.COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT;
+        case GfxFormat.BC6H_SNORM:
+            return this._EXT_texture_compression_bptc!.COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT;
+        case GfxFormat.BC7:
+            return this._EXT_texture_compression_bptc!.COMPRESSED_RGBA_BPTC_UNORM_EXT;
+        case GfxFormat.BC7_SRGB:
+            return this._EXT_texture_compression_bptc!.COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT;
         case GfxFormat.D32F_S8:
             return WebGL2RenderingContext.DEPTH32F_STENCIL8;
         case GfxFormat.D24_S8:
@@ -788,6 +811,9 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         case FormatTypeFlags.BC4_SNORM:
         case FormatTypeFlags.BC5_UNORM:
         case FormatTypeFlags.BC5_SNORM:
+        case FormatTypeFlags.BC6H_UNORM:
+        case FormatTypeFlags.BC6H_SNORM:
+        case FormatTypeFlags.BC7:
             return true;
         default:
             return false;
@@ -883,7 +909,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
         if (initialData !== undefined)
             this.uploadBufferData(buffer, 0, initialData);
-    
+
         return buffer;
     }
 
@@ -1000,14 +1026,13 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         return renderTarget;
     }
 
-    private _createProgram(descriptor: GfxProgramDescriptorSimple): GfxProgramP_GL {
+    private _createProgram(descriptor: GfxRenderProgramDescriptor): GfxProgramP_GL {
         const gl = this.gl;
         const gl_program: WebGLProgram = this.ensureResourceExists(gl.createProgram());
         const gl_shader_vert: WebGLShader | null = null;
         const gl_shader_frag: WebGLShader | null = null;
         const compileState = GfxProgramCompileStateP_GL.NeedsCompile;
         const program: GfxProgramP_GL = { _T: _T.Program, ResourceUniqueId: this.getNextUniqueId(), descriptor, compileState, gl_program, gl_shader_vert, gl_shader_frag };
-        this._tryCompileProgram(program);
         return program;
     }
 
@@ -1015,7 +1040,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         throw "whoops";
     }
 
-    public createProgramSimple(descriptor: GfxProgramDescriptor): GfxProgramP_GL {
+    public createProgram(descriptor: GfxRenderProgramDescriptor): GfxProgramP_GL {
         const program = this._createProgram(descriptor);
         if (this._resourceCreationTracker !== null)
             this._resourceCreationTracker.trackResourceCreated(program);
@@ -1061,7 +1086,10 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
             const format = translateVertexFormat(attr.format);
             vertexBufferFormats.push(format);
 
-            gl.vertexAttribPointer(attr.location, format.size, format.type, format.normalized, 0, 0);
+            if (isFormatSizedInteger(attr.format))
+                gl.vertexAttribIPointer(attr.location, format.size, format.type, 0, 0);
+            else
+                gl.vertexAttribPointer(attr.location, format.size, format.type, format.normalized, 0, 0);
 
             if (inputLayoutBuffer.frequency === GfxVertexBufferFrequency.PerInstance) {
                 gl.vertexAttribDivisor(attr.location, 1);
@@ -1086,6 +1114,16 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         const drawMode = translatePrimitiveTopology(descriptor.topology);
         const program = descriptor.program as GfxProgramP_GL;
         const inputLayout = descriptor.inputLayout as GfxInputLayoutP_GL | null;
+
+        if (program.compileState === GfxProgramCompileStateP_GL.NeedsCompile) {
+            if (inputLayout !== null) {
+                this._setVAO(inputLayout.vao);
+                this._tryCompileProgram(program);
+                this._setVAO(null);
+            } else {
+                this._tryCompileProgram(program);
+            }
+        }
 
         const megaState = descriptor.megaStateDescriptor;
         const colorAttachmentFormats = descriptor.colorAttachmentFormats.slice();
@@ -1274,8 +1312,14 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
         // TODO(jstpierre): Remove this eventually?
         if (this._currentMegaState.attachmentsState[0].channelWriteMask !== GfxChannelWriteMask.Alpha) {
-            gl.colorMask(false, false, false, true);
-            this._currentMegaState.attachmentsState[0].channelWriteMask = GfxChannelWriteMask.Alpha;
+            if (this._OES_draw_buffers_indexed !== null) {
+                this._OES_draw_buffers_indexed.colorMaskiOES(0, false, false, false, true);
+                this._currentMegaState.attachmentsState[0].channelWriteMask = GfxChannelWriteMask.Alpha;
+            } else {
+                gl.colorMask(false, false, false, true);
+                for (let i = 0; i < this._currentMegaState.attachmentsState.length; i++)
+                    this._currentMegaState.attachmentsState[0].channelWriteMask = GfxChannelWriteMask.Alpha;
+            }
         }
 
         gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0]);
@@ -1491,6 +1535,13 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
             if (this._EXT_texture_compression_rgtc !== null)
                 return isBlockCompressSized(width, height, 4, 4);
             return false;
+        case GfxFormat.BC6H_UNORM:
+        case GfxFormat.BC6H_SNORM:
+        case GfxFormat.BC7:
+        case GfxFormat.BC7_SRGB:
+            if (this._EXT_texture_compression_bptc !== null)
+                return isBlockCompressSized(width, height, 4, 4);
+            return false;
         case GfxFormat.U16_R_NORM:
         case GfxFormat.U16_RG_NORM:
         case GfxFormat.U16_RGBA_NORM:
@@ -1591,7 +1642,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
         this._statisticsGroupStack.pop();
     }
 
-    public programPatched(o: GfxProgram, descriptor: GfxProgramDescriptorSimple): void {
+    public programPatched(o: GfxProgram, descriptor: GfxRenderProgramDescriptor): void {
         assert(this._shaderDebug);
 
         const program = o as GfxProgramP_GL;
@@ -1658,7 +1709,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
 
         const prog = program.gl_program!;
         if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-            const descriptor = program.descriptor as GfxProgramDescriptor;
+            const descriptor = program.descriptor as GfxRenderProgramDescriptor;
 
             if (!this._reportShaderError(program.gl_shader_vert!, descriptor.preprocessedVert))
                 return;
@@ -1785,9 +1836,6 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
             this._currentColorAttachment[i] = null;
         }
         this._currentColorAttachment.length = numColorAttachments;
-
-        for (let i = this._currentMegaState.attachmentsState.length; i < numColorAttachments; i++)
-            this._currentMegaState.attachmentsState[i] = copyAttachmentState(undefined, defaultMegaState.attachmentsState[0]);
     }
 
     private _setRenderPassParametersColor(i: number, passAttachment: GfxRenderPassAttachmentColor | null): void {
@@ -1969,7 +2017,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
                     // Validate sampler entry.
 
                     assert(samplerEntry.gl_target === gl_target);
-                    assert(samplerEntry.formatKind === formatKind);
+                    assert(isFormatSamplerKindCompatible(samplerEntry.formatKind, formatKind));
                 } else {
                     gl.bindTexture(samplerEntry.gl_target, this._getFallbackTexture(samplerEntry));
                 }
@@ -2164,8 +2212,6 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
                 gl.cullFace(gl.BACK);
             else if (newMegaState.cullMode === GfxCullMode.Front)
                 gl.cullFace(gl.FRONT);
-            else if (newMegaState.cullMode === GfxCullMode.FrontAndBack)
-                gl.cullFace(gl.FRONT_AND_BACK);
             currentMegaState.cullMode = newMegaState.cullMode;
         }
 
@@ -2266,7 +2312,10 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
                 const format = inputLayout.vertexBufferFormats[i];
 
                 const inputLayoutBuffer = inputLayout.vertexBufferDescriptors[attr.bufferIndex]!;
-                gl.vertexAttribPointer(attr.location, format.size, format.type, format.normalized, inputLayoutBuffer.byteStride, bufferOffset);
+                if (isFormatSizedInteger(attr.format))
+                    gl.vertexAttribIPointer(attr.location, format.size, format.type, inputLayoutBuffer.byteStride, bufferOffset);
+                else
+                    gl.vertexAttribPointer(attr.location, format.size, format.type, format.normalized, inputLayoutBuffer.byteStride, bufferOffset);
             }
 
             assert((indexBuffer !== null) === (inputLayout.indexBufferFormat !== null));
@@ -2375,7 +2424,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
                     gl.blitFramebuffer(0, 0, colorResolveFrom.width, colorResolveFrom.height, 0, 0, colorResolveTo.width, colorResolveTo.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
                 }
 
-                if (!colorStore)
+                if (!colorStore && !this._invalidateFramebufferBroken)
                     gl.invalidateFramebuffer(gl.READ_FRAMEBUFFER, [gl.COLOR_ATTACHMENT0]);
 
                 if (boundReadFB)
@@ -2409,7 +2458,7 @@ class GfxImplP_GL implements GfxSwapChain, GfxDevice {
                 gl.blitFramebuffer(0, 0, depthStencilResolveFrom.width, depthStencilResolveFrom.height, 0, 0, depthStencilResolveTo.width, depthStencilResolveTo.height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
             }
 
-            if (!depthStencilStore)
+            if (!depthStencilStore && !this._invalidateFramebufferBroken)
                 gl.invalidateFramebuffer(gl.READ_FRAMEBUFFER, [gl.DEPTH_STENCIL_ATTACHMENT]);
 
             if (boundReadFB)

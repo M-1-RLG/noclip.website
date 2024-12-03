@@ -447,7 +447,6 @@ export function deserializeGameLump_sprp(buffer: ArrayBufferSlice, version: numb
     const staticObjectCount = sprp.getUint32(idx, true);
     idx += 0x04;
     for (let i = 0; i < staticObjectCount; i++) {
-        let propStartIdx = idx;
         const posX = sprp.getFloat32(idx + 0x00, true);
         const posY = sprp.getFloat32(idx + 0x04, true);
         const posZ = sprp.getFloat32(idx + 0x08, true);
@@ -590,7 +589,7 @@ export class StaticPropRenderer {
             this.studioModelInstance.movement(renderContext);
     }
 
-    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager, bsp: BSPFile, pvs: BitMap): void {
+    public prepareToRender(renderContext: SourceRenderContext, renderInstManager: GfxRenderInstManager): void {
         if (this.studioModelInstance === null)
             return;
 
@@ -600,6 +599,8 @@ export class StaticPropRenderer {
         // Test whether the prop is visible through the PVS.
 
         let visible = false;
+        const bsp = this.bspRenderer.bsp;
+        const pvs = renderContext.currentView.pvs;
         for (let i = 0; i < this.staticProp.leafList.length; i++) {
             const leafidx = this.staticProp.leafList[i];
             const cluster = bsp.leaflist[leafidx].cluster;

@@ -118,13 +118,14 @@ class BatchData {
     public primitiveIndexCounts: number[] = [];
     public primitiveIndexStarts: number[] = [];
 
-    constructor(device: GfxDevice, cache: GfxRenderCache, flverData: FLVERData, public batch: Batch, vertexBuffer: GfxCoalescedBuffer, indexBuffers: GfxCoalescedBuffer[], triangleIndexCounts: number[]) {
+    constructor(cache: GfxRenderCache, flverData: FLVERData, public batch: Batch, zeroBuffer: GfxCoalescedBuffer, vertexBuffer: GfxCoalescedBuffer, indexBuffers: GfxCoalescedBuffer[], triangleIndexCounts: number[]) {
         const flverInputState = flverData.flver.inputStates[batch.inputStateIndex];
         const flverInputLayout = flverData.flver.inputLayouts[flverInputState.inputLayoutIndex];
-        this.vertexBufferDescriptors = [vertexBuffer];
+        this.vertexBufferDescriptors = [vertexBuffer, zeroBuffer];
 
         const vertexAttributeDescriptors: GfxVertexAttributeDescriptor[] = [];
 
+        let attribBits = 0;
         for (let j = 0; j < flverInputLayout.vertexAttributes.length; j++) {
             const vertexAttributes = flverInputLayout.vertexAttributes[j];
             const location = translateLocation(vertexAttributes);
@@ -137,10 +138,26 @@ class BatchData {
                 bufferByteOffset: vertexAttributes.offset,
                 bufferIndex: 0,
             });
+
+            attribBits |= 1 << location;
+        }
+
+        // Go through and fill zeroes with anything we missed.
+        for (let i = 0; i <= MaterialProgram_Base.a_AttribMax; i++) {
+            if (attribBits & (1 << i))
+                continue;
+
+            vertexAttributeDescriptors.push({
+                location: i,
+                format: GfxFormat.F32_RGBA,
+                bufferByteOffset: 0,
+                bufferIndex: 1,
+            });
         }
 
         const vertexBufferDescriptors: GfxInputLayoutBufferDescriptor[] = [
             { byteStride: flverInputState.vertexSize, frequency: GfxVertexBufferFrequency.PerVertex, },
+            { byteStride: 0x00, frequency: GfxVertexBufferFrequency.Constant, },
         ];
 
         this.inputLayout = cache.createInputLayout({
@@ -167,12 +184,15 @@ export class FLVERData {
     constructor(cache: GfxRenderCache, public flver: FLVER) {
         const vertexBufferDatas: ArrayBufferSlice[] = [];
         const indexBufferDatas: ArrayBufferSlice[] = [];
+        vertexBufferDatas.push(new ArrayBufferSlice(new ArrayBuffer(64)));
         for (let i = 0; i < flver.inputStates.length; i++) {
             vertexBufferDatas.push(flver.inputStates[i].vertexData);
             flver.inputStates[i].vertexData = null as unknown as ArrayBufferSlice;
         }
         const vertexBuffers = coalesceBuffer(cache.device, GfxBufferUsage.Vertex, vertexBufferDatas);
         this.vertexBuffer = vertexBuffers[0].buffer;
+
+        const zeroBuffer = vertexBuffers.shift()!;
 
         const triangleIndexCounts: number[] = [];
 
@@ -194,7 +214,7 @@ export class FLVERData {
         for (let i = 0; i < flver.batches.length; i++) {
             const batch = flver.batches[i];
             const coaVertexBuffer = vertexBuffers[batch.inputStateIndex];
-            const batchData = new BatchData(cache.device, cache, this, batch, coaVertexBuffer, indexBuffers, triangleIndexCounts);
+            const batchData = new BatchData(cache, this, batch, zeroBuffer, coaVertexBuffer, indexBuffers, triangleIndexCounts);
             this.batchData.push(batchData);
         }
     }
@@ -329,6 +349,7 @@ class MaterialProgram_Base extends DeviceProgram {
     public static a_Normal = 4;
     public static a_Tangent0 = 5;
     public static a_Tangent1 = 6;
+    public static a_AttribMax = 6;
 
     public static ub_SceneParams = 0;
     public static ub_MeshFragParams = 1;
@@ -637,11 +658,11 @@ void main() {
     vec3 t_NormalWorld = MulNormalMatrix(u_WorldFromLocal[0], UNORM_TO_SNORM(a_Normal.xyz));
     v_TangentSpaceBasisZ = t_NormalWorld;
 
-    vec3 t_TangentWorld0 = MulNormalMatrix(u_WorldFromLocal[0], UNORM_TO_SNORM(a_Tangent0.xyz));
+    vec3 t_TangentWorld0 = normalize(Mul(_Mat4x4(u_WorldFromLocal[0]), vec4(UNORM_TO_SNORM(a_Tangent0.xyz), 0.0)).xyz);
     v_TangentSpaceBasisY0 = vec4(t_TangentWorld0, UNORM_TO_SNORM(a_Tangent0.w));
 
 #ifdef HAS_TANGENT1
-    vec3 t_TangentWorld1 = MulNormalMatrix(u_WorldFromLocal[0], UNORM_TO_SNORM(a_Tangent1.xyz));
+    vec3 t_TangentWorld1 = normalize(Mul(_Mat4x4(u_WorldFromLocal[0]), vec4(UNORM_TO_SNORM(a_Tangent1.xyz), 0.0)).xyz);
     v_TangentSpaceBasisY1 = vec4(t_TangentWorld1, UNORM_TO_SNORM(a_Tangent1.w));
 #endif
 
@@ -987,6 +1008,8 @@ precision mediump float;
 
 ${MaterialProgram_Base.BindingDefinitions}
 
+layout(binding = 8) uniform samplerCube u_TextureDummy;
+
 layout(std140) uniform ub_MeshFragParams {
     Mat4x3 u_WorldFromLocal[1];
     DirectionalLight u_DirectionalLight;
@@ -1051,6 +1074,8 @@ precision mediump float;
 
 ${MaterialProgram_Base.BindingDefinitions}
 
+layout(binding = 8) uniform samplerCube u_TextureDummy;
+
 layout(std140) uniform ub_MeshFragParams {
     Mat4x3 u_WorldFromLocal[1];
     DirectionalLight u_DirectionalLight;
@@ -1113,7 +1138,7 @@ void main() {
     v_TexCoordProj.xyz = gl_Position.xyw;
 
     v_TangentSpaceBasisZ = MulNormalMatrix(u_WorldFromLocal[0], UNORM_TO_SNORM(a_Normal.xyz));
-    v_TangentSpaceBasisY = MulNormalMatrix(u_WorldFromLocal[0], UNORM_TO_SNORM(a_Tangent0.xyz));
+    v_TangentSpaceBasisY = normalize(Mul(_Mat4x4(u_WorldFromLocal[0]), vec4(UNORM_TO_SNORM(a_Tangent0.xyz), 0.0)).xyz);
     v_TangentSpaceBasisX = normalize(cross(v_TangentSpaceBasisZ, v_TangentSpaceBasisY) * UNORM_TO_SNORM(a_Tangent0.w));
 
     v_TexCoordProjX = Mul(u_ProjectionView, t_PositionWorld + vec4(v_TangentSpaceBasisX, 0.0)).xyw;
@@ -1382,7 +1407,7 @@ class BatchInstance {
         if (!this.visible)
             return;
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         this.materialInstance.setOnRenderInst(renderContext, modelMatrix, materialDrawConfig, template);
 
         for (let i = 0; i < this.batchData.batch.primitiveIndexes.length; i++) {
@@ -1399,7 +1424,7 @@ class BatchInstance {
             this.materialInstance.submitRenderInst(renderContext, renderInstManager, renderInst);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 }
 
@@ -1931,7 +1956,7 @@ export class MSBRenderer {
     }
 
     public prepareToRender(renderInstManager: GfxRenderInstManager, renderContext: RenderContext): void {
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.setBindingLayouts(bindingLayouts);
 
         let offs = template.allocateUniformBuffer(MaterialProgram_Phn.ub_SceneParams, 16+4);
@@ -1945,7 +1970,7 @@ export class MSBRenderer {
         for (let i = 0; i < this.flverInstances.length; i++)
             this.flverInstances[i].prepareToRender(renderInstManager, renderContext);
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     public destroy(device: GfxDevice): void {
@@ -1969,6 +1994,7 @@ class DepthOfFieldBlurProgram extends DeviceProgram {
 
     public static Common = `
 uniform sampler2D u_TextureColor;
+uniform sampler2D u_Texture2;
 
 layout(std140) uniform ub_Params {
     vec4 u_Misc[1];
@@ -2085,7 +2111,7 @@ void main() {
 const postBindingLayouts: GfxBindingLayoutDescriptor[] = [
     { numUniformBuffers: 1, numSamplers: 2, samplerEntries: [
         { dimension: GfxTextureDimension.n2D, formatKind: GfxSamplerFormatKind.Float, },
-        { dimension: GfxTextureDimension.n2D, formatKind: GfxSamplerFormatKind.Depth, },
+        { dimension: GfxTextureDimension.n2D, formatKind: GfxSamplerFormatKind.UnfilterableFloat, },
     ] },
 ];
 
@@ -2296,6 +2322,7 @@ void main() {
 class BloomBlur1Program extends DeviceProgram {
     public static Common = `
 uniform sampler2D u_TextureColor;
+uniform sampler2D u_Texture2;
 `;
 
     public override vert = `
@@ -2321,20 +2348,12 @@ void main() {
     //
     vec4 t_Color = vec4(0.0);
 
-#if 0
-    float t_TotalWeightInv = ${1.0 / Math.sqrt(MathConstants.TAU)};
-    float t_Weight0 = exp(-0.5 * 0.0) * t_TotalWeightInv;
-    float t_Weight1 = exp(-0.5 * 1.0) * t_TotalWeightInv * 0.25;
-    float t_Weight2 = exp(-0.5 * 2.0) * t_TotalWeightInv * 0.25;
-    float t_Weight3 = exp(-0.5 * 4.0) * t_TotalWeightInv * 0.25;
-#else
     const float t_Weight[4] = float[4](
         0.3989422804014327,
         0.06049268112978584,
         0.03669066579343498,
         0.013497741628297016
     );
-#endif
 
     // Ring 0 (center)
     t_Color += texture(SAMPLER_2D(u_TextureColor), v_TexCoord) * t_Weight[0];
@@ -2373,6 +2392,7 @@ class BloomBlur2Program extends DeviceProgram {
 
     public static Common = `
 uniform sampler2D u_TextureColor;
+uniform sampler2D u_Texture2;
 `;
 
     public override vert = `
@@ -2391,18 +2411,6 @@ void main() {
     // Bloom Blur 2 ("Bloom") appears to use a massive 15-tap per pass.
     // It also seems to use a standard deviation of 3 (hardcoded?)
 
-#if 0
-    float t_StdDevSq = pow(3.0, 2.0);
-    float t_Inv = 1.0 / sqrt(2.0f * M_PI * t_StdDevSq);
-    float t_TotalI = 0.0f;
-
-    for (int i = 0; i < 8; i++) {
-        float t_Weight = exp(-0.5 * pow(i, 2.0) / t_StdDevSq) * t_Inv;
-        print("float t_Weight", i, " = ", t_Weight);
-        t_TotalI += t_Weight;
-    }
-    print("float t_TotalI = ", t_TotalI);
-#else
     const float t_Weight[8] = float[8](
         0.1329807601338109,
         0.12579440923099774,
@@ -2413,7 +2421,6 @@ void main() {
         0.017996988837729353,
         0.008740629697903166
     );
-#endif
 
     vec4 t_Color = vec4(0.0);
     t_Color += t_Weight[0] * texture(SAMPLER_2D(u_TextureColor), v_TexCoord);
@@ -2447,6 +2454,7 @@ void main() {
 class BloomCombineProgram extends DeviceProgram {
     public static Common = `
 uniform sampler2D u_TextureColor;
+uniform sampler2D u_Texture2;
 
 layout(std140) uniform ub_Params {
     vec4 u_Misc[3];
@@ -2713,6 +2721,7 @@ class Bloom {
 class ToneCorrectProgram extends DeviceProgram {
     public static Common = `
 uniform sampler2D u_TextureColor;
+uniform sampler2D u_Texture2;
 
 layout(std140) uniform ub_Params {
     Mat4x3 u_ToneCorrectMatrix;
@@ -2840,7 +2849,7 @@ export class DarkSoulsRenderer implements Viewer.SceneGfx {
         const renderInstManager = this.renderHelper.renderInstManager;
         for (let i = 0; i < this.msbRenderers.length; i++)
             this.msbRenderers[i].prepareToRender(renderInstManager, this.renderContext);
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
 
         this.renderHelper.prepareToRender();
     }
@@ -2928,7 +2937,7 @@ export class DarkSoulsRenderer implements Viewer.SceneGfx {
         this.renderHelper.antialiasingSupport.pushPasses(builder, viewerInput, mainColorGammaTargetID);
         builder.resolveRenderTargetToExternalTexture(mainColorGammaTargetID, viewerInput.onscreenTexture);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
 
         this.prepareToRender(viewerInput);
         this.renderHelper.renderGraph.execute(builder);

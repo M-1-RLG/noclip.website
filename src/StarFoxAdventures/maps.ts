@@ -16,10 +16,6 @@ import { SFAAnimationController } from './animation.js';
 import { SFATextureFetcher } from './textures.js';
 import { ModelRenderContext, ModelInstance } from './models.js';
 import { World } from './world.js';
-import { AABB } from '../Geometry.js';
-import { LightType } from './WorldLights.js';
-import { computeViewMatrix } from '../Camera.js';
-import { drawWorldSpacePoint, getDebugOverlayCanvas2D } from '../DebugJunk.js';
 
 export interface BlockInfo {
     mod: number;
@@ -236,7 +232,7 @@ class MapSceneRenderer extends SFARenderer {
     }
 
     protected override addWorldRenderInsts(device: GfxDevice, renderInstManager: GfxRenderInstManager, renderLists: SFARenderLists, sceneCtx: SceneRenderContext) {
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         fillSceneParamsDataOnTemplate(template, sceneCtx.viewerInput);
 
         const modelCtx: ModelRenderContext = {
@@ -249,7 +245,7 @@ class MapSceneRenderer extends SFARenderer {
 
         this.map.addRenderInsts(device, renderInstManager, renderLists, modelCtx);
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 }
 

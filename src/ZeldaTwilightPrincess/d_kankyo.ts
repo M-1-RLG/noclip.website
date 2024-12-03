@@ -17,8 +17,9 @@ import { dGlobals } from "./Main.js";
 import { ThunderMode, ThunderState, dKankyo_housi_Packet, dKankyo_rain_Packet, dKankyo_star_Packet, dKankyo_sun_Packet, dKankyo_vrkumo_Packet, dKyw_rain_set, dKyw_wether_delete, dKyw_wether_delete2, dKyw_wether_draw, dKyw_wether_draw2, dKyw_wether_init, dKyw_wether_init2, dKyw_wether_move, dKyw_wether_move_draw, dKyw_wether_move_draw2, dKyw_wind_set } from "./d_kankyo_wether.js";
 import { ResType } from "./d_resorce.js";
 import { dStage_stagInfo_GetSTType, stage_envr_info_class, stage_palet_info_class, stage_pselect_info_class, stage_vrbox_info_class } from "./d_stage.js";
-import { cPhs__Status, fGlobals, fopKyM_Create, fpcPf__Register, fpc__ProcessName, fpc_bs__Constructor, kankyo_class } from "./framework.js";
 import { mDoExt_btkAnm, mDoExt_modelUpdateDL } from "./m_do_ext.js";
+import { cPhs__Status, fGlobals, fopKyM_Create, fpc_bs__Constructor, fpcPf__Register, kankyo_class } from "../ZeldaWindWaker/framework.js";
+import { dProcName_e } from "./d_a.js";
 
 export const enum LightType {
     UNK_0 = 0,
@@ -188,7 +189,7 @@ export class dScnKy_env_light_c {
     // Time
     public curTime: number = 0.0;
     public nextTime: number = 0.0;
-    public timeSpeed: number = 0.012;
+    public timeAdv: number = 0.012;
     public darkTime: number = 0.0;
     public calendarDay: number = 0.0;
 
@@ -1701,7 +1702,7 @@ function setDaytime(globals: dGlobals, envLight: dScnKy_env_light_c, deltaTimeFr
     }
 
     if (dKy_darkworld_check(globals)) {
-        envLight.darkTime += envLight.timeSpeed * deltaTimeFrames;
+        envLight.darkTime += envLight.timeAdv * deltaTimeFrames;
         if (envLight.darkTime >= 360.0) {
             envLight.darkTime = 0.0;
         }
@@ -1713,14 +1714,14 @@ function setDaytime(globals: dGlobals, envLight: dScnKy_env_light_c, deltaTimeFr
         if (globals.stageName === "F_SP127" || globals.stageName === "R_SP127") {
             if (envLight.curTime >= 300 || envLight.curTime <= 60) {
                 // increase the time multiple times on these stages
-                envLight.curTime += envLight.timeSpeed * deltaTimeFrames;
-                envLight.curTime += envLight.timeSpeed * deltaTimeFrames;
+                envLight.curTime += envLight.timeAdv * deltaTimeFrames;
+                envLight.curTime += envLight.timeAdv * deltaTimeFrames;
             } else if (envLight.curTime >= 150 && envLight.curTime <= 195) {
-                envLight.curTime += envLight.timeSpeed * deltaTimeFrames;
+                envLight.curTime += envLight.timeAdv * deltaTimeFrames;
             }
         }
 
-        envLight.curTime += envLight.timeSpeed * deltaTimeFrames;
+        envLight.curTime += envLight.timeAdv * deltaTimeFrames;
         if (envLight.curTime >= 360.0) {
             envLight.curTime = 0.0;
             envLight.calendarDay += 1;
@@ -2113,7 +2114,7 @@ function envcolor_init(globals: dGlobals): void {
     envLight.calendarDay = today.getDay();
     envLight.curTime = 15 * today.getHours();
 
-    envLight.timeSpeed = 0.012;
+    envLight.timeAdv = 0.012;
 
     colorFromRGBA(envLight.lightStatus[0].Color, 1.0, 0.0, 0.0, 0.0);
     colorFromRGBA(envLight.lightStatus[1].Color, 0.0, 0.0, 0.0, 0.0);
@@ -2355,7 +2356,7 @@ export function dKy_reinitLight(globals: dGlobals): void {
 }
 
 class d_kankyo extends kankyo_class {
-    public static PROCESS_NAME = fpc__ProcessName.d_kankyo;
+    public static PROCESS_NAME = dProcName_e.d_kankyo;
 
     // dKy_Create
     public override subload(globals: dGlobals): cPhs__Status {
@@ -2393,7 +2394,7 @@ class d_kankyo extends kankyo_class {
 }
 
 class d_kyeff extends kankyo_class {
-    public static PROCESS_NAME = fpc__ProcessName.d_kyeff;
+    public static PROCESS_NAME = dProcName_e.d_kyeff;
 
     public override subload(globals: dGlobals): cPhs__Status {
         const envLight = globals.g_env_light;
@@ -2417,7 +2418,7 @@ class d_kyeff extends kankyo_class {
 }
 
 class d_kyeff2 extends kankyo_class {
-    public static PROCESS_NAME = fpc__ProcessName.d_kyeff2;
+    public static PROCESS_NAME = dProcName_e.d_kyeff2;
 
     public override subload(globals: dGlobals): cPhs__Status {
         dKyw_wether_init2(globals);
@@ -2438,13 +2439,13 @@ class d_kyeff2 extends kankyo_class {
 }
 
 export function dKankyo_create(globals: dGlobals): void {
-    fopKyM_Create(globals.frameworkGlobals, fpc__ProcessName.d_kankyo, null);
-    fopKyM_Create(globals.frameworkGlobals, fpc__ProcessName.d_kyeff, null);
-    fopKyM_Create(globals.frameworkGlobals, fpc__ProcessName.d_kyeff2, null);
+    fopKyM_Create(globals.frameworkGlobals, dProcName_e.d_kankyo, null);
+    fopKyM_Create(globals.frameworkGlobals, dProcName_e.d_kyeff, null);
+    fopKyM_Create(globals.frameworkGlobals, dProcName_e.d_kyeff2, null);
 }
 
 interface constructor extends fpc_bs__Constructor {
-    PROCESS_NAME: fpc__ProcessName;
+    PROCESS_NAME: dProcName_e;
 }
 
 export function dKy__RegisterConstructors(globals: fGlobals): void {

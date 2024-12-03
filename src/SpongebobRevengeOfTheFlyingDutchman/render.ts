@@ -1,6 +1,6 @@
 // @ts-ignore
 import program_glsl from './program.glsl';
-import { mat3, mat4, vec2, vec3, vec4 } from "gl-matrix";
+import { mat3, mat4, vec2, vec3 } from "gl-matrix";
 import { CameraController, computeViewMatrix, computeViewSpaceDepthFromWorldSpaceAABB } from "../Camera.js";
 import { colorCopy, colorLerp, colorNewCopy, White } from "../Color.js";
 import { AABB } from "../Geometry.js";
@@ -20,11 +20,11 @@ import {
     GfxDevice,
     GfxFormat,
     GfxFrontFaceMode,
+    GfxRenderProgramDescriptor,
     GfxIndexBufferDescriptor,
     GfxInputLayoutBufferDescriptor,
     GfxMegaStateDescriptor,
     GfxMipFilterMode,
-    GfxProgramDescriptorSimple,
     GfxTexFilterMode,
     GfxVertexAttributeDescriptor,
     GfxVertexBufferDescriptor,
@@ -523,7 +523,7 @@ class RenderHackState {
 }
 
 export class ROTFDRenderer implements Viewer.SceneGfx {
-    private program: GfxProgramDescriptorSimple;
+    private program: GfxRenderProgramDescriptor;
     private gfxProgram: GfxProgram;
     public renderHelper: GfxRenderHelper;
     private renderInstListMain = new GfxRenderInstList();
@@ -666,11 +666,11 @@ export class ROTFDRenderer implements Viewer.SceneGfx {
         let offs = template.allocateUniformBuffer(RotfdProgram.ub_SceneParams, RotfdProgram.SCENEPARAM_SIZE);
         const d = template.mapUniformBufferF32(RotfdProgram.ub_SceneParams);
         offs += fillMatrix4x4(d, offs, viewerInput.camera.projectionMatrix);
-        renderInstManager.setCurrentRenderInstList(this.renderInstListMain);
+        renderInstManager.setCurrentList(this.renderInstListMain);
         for (const instance of this.meshRenderers) {
             instance.prepareToRender(renderInstManager, viewerInput, this);
         }
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
 
         this.renderHelper.prepareToRender();
     }

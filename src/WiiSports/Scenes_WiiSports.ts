@@ -1,15 +1,15 @@
 import { mat4 } from "gl-matrix";
-import * as BRRES from "../rres/brres.js";
 import AnimationController from "../AnimationController.js";
 import { GfxDevice } from "../gfx/platform/GfxPlatform.js";
 import { BasicGXRendererHelper, fillSceneParamsDataOnTemplate } from "../gx/gx_render.js";
-import { EggLightManager } from "../rres/Egg.js";
+import * as BRRES from "../rres/brres.js";
 import { MDL0ModelInstance, RRESTextureHolder } from "../rres/render.js";
 import { SceneContext } from "../SceneBase.js";
+import { assertExists } from "../util.js";
 import * as Viewer from "../viewer.js";
 import { PMP, PMPObject } from "./PMP.js";
 import { ResourceSystem } from "./ResouceSystem.js";
-import { assertExists } from "../util.js";
+import { CameraController } from "../Camera.js";
 
 class WiiSportsRenderer extends BasicGXRendererHelper {
     public animationController = new AnimationController();
@@ -57,8 +57,12 @@ class WiiSportsRenderer extends BasicGXRendererHelper {
         for (let i = 0; i < this.modelInstances.length; i++)
             this.modelInstances[i].prepareToRender(device, this.renderHelper.renderInstManager, viewerInput);
 
-        this.renderHelper.renderInstManager.popTemplateRenderInst();
+        this.renderHelper.renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
+    }
+
+    public adjustCameraController(c: CameraController): void {c
+        c.setSceneMoveSpeedMult(2/60);
     }
 
     public override destroy(device: GfxDevice): void {

@@ -108,6 +108,7 @@ export interface LevelData {
     animatedTextures: AnimatedTexture[];
     clearColor: Color;
     lightDirection: mat4;
+    map?: HeightMap;
 }
 
 export interface GSConfiguration {
@@ -341,6 +342,8 @@ function decodeTexture(gsMap: GSMemoryMap, textures: Texture[], tex0: GSRegister
     return textures.length - 1;
 }
 
+const LEVEL_MODEL_SCALE = 10;
+
 function parseLevelModel(view: DataView, offs: number, gsMap: GSMemoryMap, textures: Texture[]): LevelModel {
     const flags = view.getUint16(offs + 0x00, true);
     const isTranslucent = view.getUint16(offs + 0x04, true) === 1;
@@ -349,6 +352,8 @@ function parseLevelModel(view: DataView, offs: number, gsMap: GSMemoryMap, textu
     const center = vec3FromView(view, offs + 0x10, true);
     const bboxMin = vec3FromView(view, offs + 0x20, true);
     const bboxMax = vec3FromView(view, offs + 0x30, true);
+    vec3.scale(bboxMin, bboxMin, LEVEL_MODEL_SCALE);
+    vec3.scale(bboxMax, bboxMax, LEVEL_MODEL_SCALE);
     const radius = view.getFloat32(offs + 0x3C, true);
     const bbox = new AABB(bboxMin[0], bboxMin[1], bboxMin[2], bboxMax[0], bboxMax[1], bboxMax[2]);
 
@@ -661,12 +666,12 @@ function parseLevelModel(view: DataView, offs: number, gsMap: GSMemoryMap, textu
             };
             drawCalls.push(currentDrawCall);
         }
-
+        const extraScale = vertexRun.effectType === LevelEffectType.POSITIONS ? LEVEL_MODEL_SCALE : 1;
         for (let k = 0; k < vertexRunData.length; k += VERTEX_STRIDE) {
             // Position.
-            vertexData[vertexDataDst++] = vertexRunData[k + 0];
-            vertexData[vertexDataDst++] = vertexRunData[k + 1];
-            vertexData[vertexDataDst++] = vertexRunData[k + 2];
+            vertexData[vertexDataDst++] = vertexRunData[k + 0] * LEVEL_MODEL_SCALE;
+            vertexData[vertexDataDst++] = vertexRunData[k + 1] * LEVEL_MODEL_SCALE;
+            vertexData[vertexDataDst++] = vertexRunData[k + 2] * LEVEL_MODEL_SCALE;
             // Color.
             vertexData[vertexDataDst++] = vertexRunData[k + 3]
             vertexData[vertexDataDst++] = vertexRunData[k + 4];
@@ -676,10 +681,10 @@ function parseLevelModel(view: DataView, offs: number, gsMap: GSMemoryMap, textu
             vertexData[vertexDataDst++] = vertexRunData[k + 7];
             vertexData[vertexDataDst++] = vertexRunData[k + 8];
             // Extra data
-            vertexData[vertexDataDst++] = vertexRunData[k + 9]
-            vertexData[vertexDataDst++] = vertexRunData[k + 10];
-            vertexData[vertexDataDst++] = vertexRunData[k + 11];
-            vertexData[vertexDataDst++] = vertexRunData[k + 12];
+            vertexData[vertexDataDst++] = vertexRunData[k + 9] * extraScale;
+            vertexData[vertexDataDst++] = vertexRunData[k + 10] * extraScale;
+            vertexData[vertexDataDst++] = vertexRunData[k + 11] * extraScale;
+            vertexData[vertexDataDst++] = vertexRunData[k + 12] * extraScale;
         }
 
         const indexRunData = vertexRun.indexRunData;
@@ -693,12 +698,81 @@ function parseLevelModel(view: DataView, offs: number, gsMap: GSMemoryMap, textu
     return { vertexData, indexData, drawCalls, bbox, flags, isTranslucent, center };
 }
 
+export interface MapTri {
+    vertices: number[];
+    edges: number[];
+    location: number;
+    surfaceType: number;
+    passability: number;
+    encounter: number;
+    data: number;
+}
+
+export interface HeightMap {
+    scale: number;
+    vertices: Int16Array;
+    tris: MapTri[];
+    hasBattle: boolean;
+    hasCollision: boolean;
+}
+
 export function parseLevelGeometry(buffer: ArrayBufferSlice, textureData: LevelTextures): LevelData {
     assert(readString(buffer, 0, 4) === "MAP1");
 
     const gsMap = textureData.gsMap;
     const paletteType = textureData.paletteType;
     const view = buffer.createDataView();
+    const heightmapOffs = view.getUint32(0x18, true);
+
+    let map: HeightMap | undefined;
+    if (heightmapOffs !== 0) {
+        const vertexCount = view.getUint16(heightmapOffs + 0xA, true);
+        const scale = view.getFloat32(heightmapOffs + 0xC, true) / LEVEL_MODEL_SCALE;
+        const vertexOffs = view.getUint32(heightmapOffs + 0x18, true) + heightmapOffs;
+        const triOffs = view.getUint32(heightmapOffs + 0x1C, true) + heightmapOffs;
+        const triCount = view.getUint16(triOffs + 0x8, true);
+        let offs = view.getUint32(triOffs + 0xC, true) + heightmapOffs;
+        const tris: MapTri[] = [];
+        let hasCollision = false;
+        let hasBattle = false;
+        for (let i = 0; i < triCount; i++) {
+            const data = view.getUint32(offs + 0xC, true);
+            const light = [
+                (data >>> 0x11) & 0x1F,
+                (data >>> 0x16) & 0x1F,
+                (data >>> 0x1B) & 0x1F,
+            ];
+            const t = {
+                vertices: [
+                    view.getUint16(offs + 0x0, true),
+                    view.getUint16(offs + 0x2, true),
+                    view.getUint16(offs + 0x4, true),
+                ],
+                edges: [
+                    view.getInt16(offs + 0x6, true),
+                    view.getInt16(offs + 0x8, true),
+                    view.getInt16(offs + 0xA, true),
+                ],
+                data,
+                passability: data & 0x7F,
+                encounter: (data >>> 7) & 3,
+                // 9 ??
+                location: (data >>> 0xB) & 3,
+                // 13 ??
+                surfaceType: (data >>> 0xF) & 3,
+                light,
+            };
+            if (t.passability)
+                hasCollision = true;
+            if (t.encounter)
+                hasBattle = true;
+            tris.push(t);
+            offs += 0x10;
+        }
+        const vertices = buffer.createTypedArray(Int16Array, vertexOffs, vertexCount*4);
+        map = {scale, tris, vertices, hasCollision, hasBattle};
+    }
+
     let offs = view.getUint32(0x14, true);
 
     assert(view.getUint32(offs) === 0x65432100)
@@ -856,7 +930,7 @@ export function parseLevelGeometry(buffer: ArrayBufferSlice, textureData: LevelT
         offs += sectionLength;
     }
 
-    return { parts, textures, effects, lightDirection, clearColor, animatedTextures };
+    return { parts, textures, effects, lightDirection, clearColor, animatedTextures, map };
 }
 
 export const enum KeyframeFormat {
@@ -964,13 +1038,68 @@ export interface ControllerSpec {
 }
 
 export interface ScriptData {
+    name: string;
     intConsts: Int32Array;
     floatConsts: Float32Array;
     code: DataView;
+    shared: DataView;
+
+    arrays: ScriptArray[];
 
     controllers: ControllerSpec[]
 
     mapPoints: MapPoint[];
+}
+
+export enum ArraySource {
+    GLOBAL,
+    UNK,
+    UNUSED,
+    PRIVATE,
+    SHARED,
+    OBJECT,
+    EVENT,
+}
+
+export const enum DataFormat {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    FLOAT,
+}
+
+interface ScriptArray {
+    rawDesc: number;
+    source: ArraySource;
+    offset: number;
+    elementType: DataFormat;
+    count: number;
+    values?: number[];
+}
+
+function readValue(view: DataView, offset: number, format: DataFormat): number {
+    switch (format) {
+        case DataFormat.U8: return view.getUint8(offset);
+        case DataFormat.I8: return view.getInt8(offset);
+        case DataFormat.U16: return view.getUint16(offset, true);
+        case DataFormat.I16: return view.getInt16(offset, true);
+        case DataFormat.U32: return view.getUint32(offset, true);
+        case DataFormat.I32: return view.getInt32(offset, true);
+        case DataFormat.FLOAT: return view.getFloat32(offset, true);
+    }
+    throw `bad format ${format}`;
+}
+
+export function byteSize(format: DataFormat): number {
+    switch (format) {
+        case DataFormat.U8: case DataFormat.I8: return 1;
+        case DataFormat.U16: case DataFormat.I16: return 2;
+        case DataFormat.U32: case DataFormat.I32: case DataFormat.FLOAT: return 4;
+    }
+    throw `bad format ${format}`;
 }
 
 export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
@@ -982,11 +1111,13 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
 
     const mapStart = view.getUint32(scriptStart + 0x04, true);
     const mapEnd = view.getUint32(scriptStart + 0x08, true);
+    const nameStart = view.getUint32(scriptStart + 0x0C, true);
 
     // numbers indicating which controllers are of which sizes?
 
     // these can correspond to different pause menu location names
     const zoneCount = view.getUint16(scriptStart + 0x1E, true);
+    const eventVarStart = view.getUint32(scriptStart + 0x20, true);
     const zoneStart = view.getUint32(scriptStart + 0x28, true);
     const moreDataStart = view.getUint32(scriptStart + 0x2C, true);
 
@@ -1006,9 +1137,10 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
         mapPoints.push({ entrypoint, heading, pos: vec3.fromValues(x, y, z) });
     }
 
+    const name = readString(buffer, scriptStart + nameStart);
 
-    let bufferDescriptionStart = -1;
-    let bufferDescriptionCount = -1;
+    let arrayDescriptionStart = -1;
+    let arrayDescriptionCount = -1;
     let intConstStart = -1;
     let intConstCount = -1;
     let floatConstStart = -1;
@@ -1023,12 +1155,13 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
 
     const controllers: ControllerSpec[] = [];
     let offset = controllerStart + scriptStart;
+    const seenPrivateOffsets = new Set<number>();
     for (let i = 0; i < controllerCount; i++, offset += 0x34) {
         // offsets are given as if the structre were variable length, but it isn't
         assert(view.getUint32(scriptStart + 0x38 + 4 * i, true) === offset - scriptStart);
 
         const type: ControllerType = view.getUint8(offset + 0x00);
-        const bufferCount = view.getUint16(offset + 0x02, true);
+        const arrayCount = view.getUint16(offset + 0x02, true);
         const intCount = view.getUint16(offset + 0x04, true);
         const floatCount = view.getUint16(offset + 0x06, true);
         const entryCount = view.getUint16(offset + 0x08, true);
@@ -1036,7 +1169,7 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
         const unusedLength = view.getUint32(offset + 0x0C, true);
         const privateLength = view.getUint32(offset + 0x10, true);
 
-        const bufferStart = view.getUint32(offset + 0x14, true);
+        const arrayStart = view.getUint32(offset + 0x14, true);
         const intStart = view.getUint32(offset + 0x18, true);
         const floatStart = view.getUint32(offset + 0x1C, true);
         const entryStart = view.getUint32(offset + 0x20, true);
@@ -1046,9 +1179,11 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
         const sharedStart = view.getUint32(offset + 0x30, true);
 
         assert(unusedDataStart === 0);
+        assert(privateLength === 0 || !seenPrivateOffsets.has(privateDataStart));
+        seenPrivateOffsets.add(privateDataStart);
 
-        bufferDescriptionStart = match(bufferDescriptionStart, bufferStart);
-        bufferDescriptionCount = match(bufferDescriptionCount, bufferCount);
+        arrayDescriptionStart = match(arrayDescriptionStart, arrayStart);
+        arrayDescriptionCount = match(arrayDescriptionCount, arrayCount);
         intConstStart = match(intConstStart, intStart);
         floatConstStart = match(floatConstStart, floatStart);
         intConstCount = match(intConstCount, intCount);
@@ -1070,6 +1205,27 @@ export function parseEvent(buffer: ArrayBufferSlice): ScriptData {
     const floatConsts = new Float32Array(buffer.arrayBuffer, scriptStart + floatConstStart, floatConstCount);
     const instructionEnd = sharedDataStart < 0 ? moreDataStart : sharedDataStart;
     const code = buffer.createDataView(instructionStart + scriptStart, instructionEnd - instructionStart);
+    const shared = buffer.createDataView(scriptStart + sharedDataStart);
+    const arrays: ScriptArray[] = [];
+    for (let i = 0, offs = scriptStart + arrayDescriptionStart; i < arrayDescriptionCount; i++, offs += 8) {
+        const info = view.getUint32(offs, true);
+        const offset = info & 0xFFFFFF;
+        const elementType : DataFormat = info >>> 28;
+        const source = (info >>> 25) & 7;
+        const count = view.getUint16(offs + 4, true);
 
-    return { mapPoints, intConsts, floatConsts, code, controllers };
+        const arr: ScriptArray = {rawDesc: info, count, offset, elementType, source};
+        if (source === ArraySource.SHARED || source === ArraySource.EVENT) {
+            const values: number[] = [];
+            let offs = scriptStart + offset + (source === ArraySource.SHARED ? sharedDataStart : eventVarStart);
+            for (let j = 0; j < count; j++) {
+                values.push(readValue(view, offs, elementType));
+                offs += byteSize(elementType);
+            }
+            arr.values = values;
+        }
+        arrays.push(arr);
+    }
+
+    return { mapPoints, intConsts, floatConsts, code, shared, controllers, name, arrays };
 }

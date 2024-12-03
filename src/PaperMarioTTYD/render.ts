@@ -316,7 +316,7 @@ class NodeInstance {
         scratchAABB.transform(this.node.bbox, scratchMatrix);
         const depth = computeViewSpaceDepthFromWorldSpaceAABB(viewerInput.camera.viewMatrix, scratchAABB);
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.sortKey = setSortKeyDepth(template.sortKey, depth);
         template.setMegaStateFlags(this.megaStateFlags);
 
@@ -357,7 +357,7 @@ class NodeInstance {
         for (let i = 0; i < this.children.length; i++)
             this.children[i].prepareToRender(device, renderInstManager, viewerInput, textureHolder);
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     private createCollisionMaterialInstance(device: GfxDevice, cache: GfxRenderCache): void {
@@ -529,6 +529,7 @@ export class WorldRenderer extends BasicGXRendererHelper {
     private backgroundRenderer: BackgroundBillboardRenderer | null = null;
     private animationController = new AnimationController(60);
     private animationNames: string[];
+    private wireframe: boolean = false;
 
     public animGroupCache: AnimGroupDataCache | null = null;
     public mobj: MOBJ[] = [];
@@ -602,6 +603,9 @@ export class WorldRenderer extends BasicGXRendererHelper {
         const renderInstManager = this.renderHelper.renderInstManager;
         const template = this.renderHelper.pushTemplateRenderInst();
 
+        if (this.wireframe)
+            template.setMegaStateFlags({ wireframe: true });
+
         this.animationController.setTimeInMilliseconds(viewerInput.time);
 
         if (this.backgroundRenderer !== null)
@@ -615,12 +619,13 @@ export class WorldRenderer extends BasicGXRendererHelper {
         for (let i = 0; i < this.mobj.length; i++)
             this.mobj[i].prepareToRender(device, renderInstManager, viewerInput);
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
         this.renderHelper.prepareToRender();
     }
 
     public createPanels(): UI.Panel[] {
         const renderHacksPanel = new UI.Panel();
+        renderHacksPanel.customHeaderBackgroundColor = UI.COOL_BLUE_COLOR;
         renderHacksPanel.setTitle(UI.RENDER_HACKS_ICON, 'Render Hacks');
         const enableVertexColorsCheckbox = new UI.Checkbox('Enable Vertex Colors', true);
         enableVertexColorsCheckbox.onchanged = () => {
@@ -659,6 +664,14 @@ export class WorldRenderer extends BasicGXRendererHelper {
                 otherNodes.forEach((nodeInstance) => nodeInstance.setVisible(enableOtherNodes.checked));
             };
             renderHacksPanel.contents.appendChild(enableOtherNodes.elem);
+        }
+        if (this.renderHelper.device.queryLimits().wireframeSupported) {
+            const wireframe = new UI.Checkbox('Wireframe', false);
+            wireframe.onchanged = () => {
+                const v = wireframe.checked;
+                this.wireframe = v;
+            };
+            renderHacksPanel.contents.appendChild(wireframe.elem);
         }
         return [renderHacksPanel];
     }

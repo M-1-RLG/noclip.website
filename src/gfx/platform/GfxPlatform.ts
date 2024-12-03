@@ -26,20 +26,21 @@ export const enum GfxCullMode {
     None,
     Front,
     Back,
-    FrontAndBack,
 }
 
 export enum GfxBlendFactor {
-    Zero             = WebGLRenderingContext.ZERO,
-    One              = WebGLRenderingContext.ONE,
-    Src              = WebGLRenderingContext.SRC_COLOR,
-    OneMinusSrc      = WebGLRenderingContext.ONE_MINUS_SRC_COLOR,
-    Dst              = WebGLRenderingContext.DST_COLOR,
-    OneMinusDst      = WebGLRenderingContext.ONE_MINUS_DST_COLOR,
-    SrcAlpha         = WebGLRenderingContext.SRC_ALPHA,
-    OneMinusSrcAlpha = WebGLRenderingContext.ONE_MINUS_SRC_ALPHA,
-    DstAlpha         = WebGLRenderingContext.DST_ALPHA,
-    OneMinusDstAlpha = WebGLRenderingContext.ONE_MINUS_DST_ALPHA,
+    Zero                  = WebGLRenderingContext.ZERO,
+    One                   = WebGLRenderingContext.ONE,
+    Src                   = WebGLRenderingContext.SRC_COLOR,
+    OneMinusSrc           = WebGLRenderingContext.ONE_MINUS_SRC_COLOR,
+    Dst                   = WebGLRenderingContext.DST_COLOR,
+    OneMinusDst           = WebGLRenderingContext.ONE_MINUS_DST_COLOR,
+    SrcAlpha              = WebGLRenderingContext.SRC_ALPHA,
+    OneMinusSrcAlpha      = WebGLRenderingContext.ONE_MINUS_SRC_ALPHA,
+    DstAlpha              = WebGLRenderingContext.DST_ALPHA,
+    OneMinusDstAlpha      = WebGLRenderingContext.ONE_MINUS_DST_ALPHA,
+    ConstantColor         = WebGLRenderingContext.CONSTANT_COLOR,
+    OneMinusConstantColor = WebGLRenderingContext.ONE_MINUS_CONSTANT_COLOR,
 }
 
 export enum GfxBlendMode {
@@ -52,7 +53,7 @@ export const enum GfxWrapMode { Clamp, Repeat, Mirror }
 export const enum GfxTexFilterMode { Point, Bilinear }
 // TODO(jstpierre): remove NoMip
 export const enum GfxMipFilterMode { NoMip, Nearest, Linear }
-export const enum GfxPrimitiveTopology { Triangles }
+export const enum GfxPrimitiveTopology { Triangles, Lines }
 
 export const enum GfxBufferUsage {
     Index   = 0b00001,
@@ -174,6 +175,7 @@ export interface GfxSamplerBinding {
 
 export const enum GfxSamplerFormatKind {
     Float,
+    UnfilterableFloat,
     Uint,
     Sint,
     Depth,
@@ -198,40 +200,9 @@ export interface GfxBindingsDescriptor {
     samplerBindings: GfxSamplerBinding[];
 }
 
-export const enum GfxBindingLayoutEntryType {
-    UniformBuffer,
-    Sampler,
-    StorageBuffer,
-    StorageTexture,
-}
-
-interface GfxBindingLayoutEntrySampler extends GfxBindingLayoutSamplerDescriptor {
-    type: GfxBindingLayoutEntryType.Sampler;
-}
-
-interface GfxBindingLayoutEntryBase {
-    type: GfxBindingLayoutEntryType;
-}
-
-type GfxBindingLayoutEntry = GfxBindingLayoutEntryBase | GfxBindingLayoutEntrySampler;
-
-export interface GfxBindingLayoutDescriptor2 {
-    entries: GfxBindingLayoutEntry[];
-}
-
-export interface GfxBindingsDescriptor2 {
-    bindingLayout: GfxBindingLayoutDescriptor2;
-    entries: (GfxBufferBinding | GfxSamplerBinding)[];
-}
-
-export interface GfxProgramDescriptorSimple {
+export interface GfxRenderProgramDescriptor {
     preprocessedVert: string;
     preprocessedFrag: string | null;
-}
-
-export interface GfxProgramDescriptor extends GfxProgramDescriptorSimple {
-    ensurePreprocessed(vendorInfo: GfxVendorInfo): void;
-    associate(device: GfxDevice, program: GfxProgram): void;
 }
 
 export const enum GfxShadingLanguage {
@@ -264,7 +235,7 @@ export interface GfxAttachmentState {
 
 export interface GfxMegaStateDescriptor {
     attachmentsState: GfxAttachmentState[];
-    blendConstant: GfxColor;
+    blendConstant: GfxColor; // TODO(jstpierre): Make this dynamic state?
     depthCompare: GfxCompareMode;
     depthWrite: boolean;
     stencilCompare: GfxCompareMode;
@@ -440,7 +411,7 @@ export interface GfxDevice {
     createSampler(descriptor: GfxSamplerDescriptor): GfxSampler;
     createRenderTarget(descriptor: GfxRenderTargetDescriptor): GfxRenderTarget;
     createRenderTargetFromTexture(texture: GfxTexture): GfxRenderTarget;
-    createProgramSimple(descriptor: GfxProgramDescriptorSimple): GfxProgram;
+    createProgram(descriptor: GfxRenderProgramDescriptor): GfxProgram;
     createComputeProgram(descriptor: GfxComputeProgramDescriptor): GfxProgram;
     createBindings(bindingsDescriptor: GfxBindingsDescriptor): GfxBindings;
     createInputLayout(inputLayoutDescriptor: GfxInputLayoutDescriptor): GfxInputLayout;
@@ -511,7 +482,7 @@ export interface GfxDevice {
     setResourceName(o: GfxResource, s: string): void;
     setResourceLeakCheck(o: GfxResource, v: boolean): void;
     checkForLeaks(): void;
-    programPatched(o: GfxProgram, descriptor: GfxProgramDescriptorSimple): void;
+    programPatched(o: GfxProgram, descriptor: GfxRenderProgramDescriptor): void;
     pushStatisticsGroup(statisticsGroup: GfxStatisticsGroup): void;
     popStatisticsGroup(): void;
 }

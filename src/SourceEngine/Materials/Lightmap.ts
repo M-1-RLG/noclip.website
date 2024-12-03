@@ -4,9 +4,9 @@ import { TextureMapping } from "../../TextureHolder.js";
 import { GfxDevice, GfxFormat, GfxMipFilterMode, GfxSampler, GfxTexFilterMode, GfxTexture, GfxTextureDimension, GfxTextureUsage, GfxWrapMode } from "../../gfx/platform/GfxPlatform.js";
 import { GfxRenderCache } from "../../gfx/render/GfxRenderCache.js";
 import { assert, nArray } from "../../util.js";
-import { LightmapPacker, LightmapPackerPage, SurfaceLightmapData } from "../BSPFile.js";
+import { LightmapPacker, LightmapPackerPage, FaceLightmapData } from "../BSPFile.js";
 import { SourceRenderContext } from "../Main.js";
-import { RGBM_SCALE } from "./MaterialBase.js";
+import { BaseMaterial, RGBM_SCALE } from "./MaterialBase.js";
 
 class LightmapPage {
     public gfxTexture: GfxTexture;
@@ -146,7 +146,7 @@ function packRGBM(dst: Uint8Array, dstOffs: number, r: number, g: number, b: num
     return 4;
 }
 
-function lightmapPackRuntime(dstPage: LightmapPage, location: Readonly<SurfaceLightmapData>, src: Float32Array, srcOffs: number): void {
+function lightmapPackRuntime(dstPage: LightmapPage, location: Readonly<FaceLightmapData>, src: Float32Array, srcOffs: number): void {
     const dst = dstPage.data;
     const dstWidth = dstPage.page.width;
 
@@ -159,7 +159,7 @@ function lightmapPackRuntime(dstPage: LightmapPage, location: Readonly<SurfaceLi
     }
 }
 
-function lightmapPackRuntimeWhite(dstPage: LightmapPage, location: Readonly<SurfaceLightmapData>): void {
+function lightmapPackRuntimeWhite(dstPage: LightmapPage, location: Readonly<FaceLightmapData>): void {
     const dst = dstPage.data;
     const dstWidth = dstPage.page.width;
 
@@ -171,7 +171,7 @@ function lightmapPackRuntimeWhite(dstPage: LightmapPage, location: Readonly<Surf
     }
 }
 
-function lightmapPackRuntimeBumpmap(dstPage: LightmapPage, location: Readonly<SurfaceLightmapData>, src: Float32Array, srcOffs: number): void {
+function lightmapPackRuntimeBumpmap(dstPage: LightmapPage, location: Readonly<FaceLightmapData>, src: Float32Array, srcOffs: number): void {
     const dst = dstPage.data;
     const srcTexelCount = location.width * location.height;
     const srcSize = srcTexelCount * 3;
@@ -212,16 +212,31 @@ function lightmapPackRuntimeBumpmap(dstPage: LightmapPage, location: Readonly<Su
     }
 }
 
+const enum FaceLightmapUpdaterState {
+    NotReady,
+    NeedsUpload,
+    Idle,
+}
 
-export class SurfaceLightmap {
+export class FaceLightmapUpdater {
     // The styles that we built our lightmaps for.
-    public lightmapStyleIntensities: number[];
+    private lightmapStyleIntensities: number[];
+    private state = FaceLightmapUpdaterState.NotReady;
+    private wantsLightmap: boolean = false;
+    private wantsBumpmap: boolean = false;
 
-    constructor(public lightmapData: SurfaceLightmapData, private wantsLightmap: boolean, private wantsBumpmap: boolean) {
+    constructor(public lightmapData: FaceLightmapData) {
         this.lightmapStyleIntensities = nArray(this.lightmapData.styles.length, () => -1);
     }
 
-    public checkDirty(renderContext: SourceRenderContext): boolean {
+    public setMaterial(materialInstance: BaseMaterial): void {
+        assert(this.state === FaceLightmapUpdaterState.NotReady);
+        this.state = FaceLightmapUpdaterState.NeedsUpload;
+        this.wantsLightmap = materialInstance.wantsLightmap;
+        this.wantsBumpmap = materialInstance.wantsBumpmappedLightmap;
+    }
+
+    private checkDirty(renderContext: SourceRenderContext): boolean {
         const worldLightingState = renderContext.worldLightingState;
 
         if (!this.wantsLightmap)
@@ -236,11 +251,19 @@ export class SurfaceLightmap {
         return false;
     }
 
-    public buildLightmap(renderContext: SourceRenderContext, managerPageIndex: number): void {
+    public update(renderContext: SourceRenderContext): void {
+        if (this.state === FaceLightmapUpdaterState.Idle && this.checkDirty(renderContext))
+            this.state = FaceLightmapUpdaterState.NeedsUpload;
+    }
+
+    public buildLightmap(renderContext: SourceRenderContext, pageOffset: number): void {
+        if (this.state !== FaceLightmapUpdaterState.NeedsUpload)
+            return;
+
         const worldLightingState = renderContext.worldLightingState;
         const scratchpad = renderContext.lightmapManager.scratchpad;
 
-        const dstPage = renderContext.lightmapManager.getPage(managerPageIndex);
+        const dstPage = renderContext.lightmapManager.getPage(pageOffset + this.lightmapData.pageIndex);
         const hasLightmap = this.lightmapData.samples !== null;
         if (this.wantsLightmap && hasLightmap) {
             const texelCount = this.lightmapData.width * this.lightmapData.height;
@@ -280,5 +303,6 @@ export class SurfaceLightmap {
 
         dstPage.uploadDirty = true;
         renderContext.debugStatistics.lightmapsBuilt++;
+        this.state = FaceLightmapUpdaterState.Idle;
     }
 }

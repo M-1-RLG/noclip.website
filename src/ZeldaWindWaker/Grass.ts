@@ -21,7 +21,7 @@ import { colorCopy, colorFromRGBA } from '../Color.js';
 import { dKy_GxFog_set } from './d_kankyo.js';
 import { dBgS_GndChk } from './d_bg.js';
 import { getMatrixTranslation } from '../MathHelpers.js';
-import { cM__Short2Rad } from './SComponent.js';
+import { cM_s2rad } from './SComponent.js';
 
 function createMaterialHelper(material: GXMaterial): GXMaterialHelperGfx {
     // Patch material.
@@ -123,8 +123,8 @@ function checkGroundY(globals: dGlobals, roomIdx: number, pos: vec3) {
 }
 
 function setColorFromRoomNo(globals: dGlobals, materialParams: MaterialParams, roomNo: number): void {
-    colorCopy(materialParams.u_Color[ColorKind.C0], globals.roomStatus[roomNo].tevStr.colorC0);
-    colorCopy(materialParams.u_Color[ColorKind.C1], globals.roomStatus[roomNo].tevStr.colorK0);
+    colorCopy(materialParams.u_Color[ColorKind.C0], globals.roomCtrl.status[roomNo].tevStr.colorC0);
+    colorCopy(materialParams.u_Color[ColorKind.C1], globals.roomCtrl.status[roomNo].tevStr.colorK0);
 }
 
 function distanceCull(camPos: ReadonlyVec3, objPos: ReadonlyVec3, maxDist = 20000) {
@@ -326,8 +326,8 @@ export class FlowerPacket {
     public calc(frameCount: number): void {
         // Idle animation updates
         for (let i = 0; i < 8; i++) {
-            const theta = Math.cos(cM__Short2Rad(1000.0 * (frameCount + 0xfa * i)));
-            this.anims[i].rotationX = cM__Short2Rad(1000.0 + 1000.0 * theta);
+            const theta = Math.cos(cM_s2rad(1000.0 * (frameCount + 0xfa * i)));
+            this.anims[i].rotationX = cM_s2rad(1000.0 + 1000.0 * theta);
         }
 
         // @TODO: Hit checks
@@ -370,7 +370,7 @@ export class FlowerPacket {
 
         getMatrixTranslation(scratchVec3a, camera.worldMatrix);
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.setSamplerBindingsFromTextureMappings(model.textureMapping);
         setColorFromRoomNo(globals, materialParams, roomIdx);
         dKy_GxFog_set(globals.g_env_light, materialParams.u_FogBlock, viewerInput.camera);
@@ -393,11 +393,11 @@ export class FlowerPacket {
             renderInstManager.submitRenderInst(renderInst);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     private drawRoom(globals: dGlobals, roomIdx: number, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
-        if (!globals.roomStatus[roomIdx].visible)
+        if (!globals.roomCtrl.status[roomIdx].visible)
             return;
 
         if (this.rooms[roomIdx].length === 0)
@@ -643,11 +643,11 @@ export class TreePacket {
     public calc(frameCount: number): void {
         // Idle animation updates
         for (let i = 0; i < 8; i++) {
-            let theta = Math.cos(cM__Short2Rad(4000.0 * (frameCount + 0xfa * i)));
-            this.anims[i].topRotationY = cM__Short2Rad(100.0 + this.anims[i].initialRotationShort + 100.0 * theta);
+            let theta = Math.cos(cM_s2rad(4000.0 * (frameCount + 0xfa * i)));
+            this.anims[i].topRotationY = cM_s2rad(100.0 + this.anims[i].initialRotationShort + 100.0 * theta);
 
-            theta = Math.cos(cM__Short2Rad(1000.0 * (frameCount + 0xfa * i)));
-            this.anims[i].topRotationX = cM__Short2Rad(100 + 100 * theta);
+            theta = Math.cos(cM_s2rad(1000.0 * (frameCount + 0xfa * i)));
+            this.anims[i].topRotationX = cM_s2rad(100 + 100 * theta);
         }
 
         // @TODO: Hit checks
@@ -700,7 +700,7 @@ export class TreePacket {
 
             mat4.fromYRotation(anim.trunkMtx, anim.trunkFallYaw);
             mat4.rotateX(anim.trunkMtx, anim.trunkMtx, anim.trunkRotationX);
-            mat4.rotateY(anim.trunkMtx, anim.trunkMtx, cM__Short2Rad(anim.initialRotationShort) - anim.trunkFallYaw);
+            mat4.rotateY(anim.trunkMtx, anim.trunkMtx, cM_s2rad(anim.initialRotationShort) - anim.trunkFallYaw);
         }
 
         // Update grass packets
@@ -719,7 +719,7 @@ export class TreePacket {
     }
 
     private drawRoom(globals: dGlobals, roomIdx: number, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput, device: GfxDevice) {
-        if (!globals.roomStatus[roomIdx].visible)
+        if (!globals.roomCtrl.status[roomIdx].visible)
             return;
 
         const room = this.rooms[roomIdx];
@@ -732,7 +732,7 @@ export class TreePacket {
         // Draw shadows
         {
             // Set transparent
-            const template = renderInstManager.pushTemplateRenderInst();
+            const template = renderInstManager.pushTemplate();
             template.sortKey = makeSortKey(GfxRendererLayer.TRANSLUCENT);
             setColorFromRoomNo(globals, materialParams, roomIdx);
             dKy_GxFog_set(globals.g_env_light, materialParams.u_FogBlock, viewerInput.camera);
@@ -753,12 +753,12 @@ export class TreePacket {
                 this.treeModel.shadow.materialHelper.allocateDrawParamsDataOnInst(shadowRenderInst, drawParams);
                 renderInstManager.submitRenderInst(shadowRenderInst);
             }
-            renderInstManager.popTemplateRenderInst();
+            renderInstManager.popTemplate();
         }
 
         // Draw tree trunks
         {
-            const template = renderInstManager.pushTemplateRenderInst();
+            const template = renderInstManager.pushTemplate();
             setColorFromRoomNo(globals, materialParams, roomIdx);
             dKy_GxFog_set(globals.g_env_light, materialParams.u_FogBlock, viewerInput.camera);
             // Set the tree alpha. This fades after the tree is cut. This is multiplied with the texture alpha at the end of TEV stage 1.
@@ -787,7 +787,7 @@ export class TreePacket {
                 this.treeModel.main.materialHelper.allocateDrawParamsDataOnInst(topRenderInst, drawParams);
                 renderInstManager.submitRenderInst(topRenderInst);
             }
-            renderInstManager.popTemplateRenderInst();
+            renderInstManager.popTemplate();
         }
     }
 
@@ -919,7 +919,7 @@ export class GrassPacket {
         for (let i = 0; i < 8; i++) {
             this.anims[i] = {
                 active: true,
-                rotationY: cM__Short2Rad(0x2000 * i),
+                rotationY: cM_s2rad(0x2000 * i),
                 rotationX: 0,
                 modelMtx: mat4.create(),
             }
@@ -951,8 +951,8 @@ export class GrassPacket {
 
         // Idle animation updates
         for (let i = 0; i < 8; i++) {
-            let theta = Math.cos(cM__Short2Rad(windPower * (frameCount + 0xfa * i)));
-            this.anims[i].rotationX = cM__Short2Rad(windPower + windPower * theta);
+            let theta = Math.cos(cM_s2rad(windPower * (frameCount + 0xfa * i)));
+            this.anims[i].rotationX = cM_s2rad(windPower + windPower * theta);
         }
 
         // @TODO: Hit checks
@@ -1016,7 +1016,7 @@ export class GrassPacket {
     }
 
     private drawRoom(globals: dGlobals, roomIdx: number, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
-        if (!globals.roomStatus[roomIdx].visible)
+        if (!globals.roomCtrl.status[roomIdx].visible)
             return;
 
         const room = this.rooms[roomIdx];
@@ -1027,7 +1027,7 @@ export class GrassPacket {
         const worldToView = viewerInput.camera.viewMatrix;
         const worldCamPos = mat4.getTranslation(scratchVec3b, viewerInput.camera.worldMatrix);
 
-        const template = renderInstManager.pushTemplateRenderInst();
+        const template = renderInstManager.pushTemplate();
         template.setSamplerBindingsFromTextureMappings(this.grassModel.textureMapping);
         setColorFromRoomNo(globals, materialParams, roomIdx);
         dKy_GxFog_set(globals.g_env_light, materialParams.u_FogBlock, viewerInput.camera);
@@ -1049,7 +1049,7 @@ export class GrassPacket {
             renderInstManager.submitRenderInst(renderInst);
         }
 
-        renderInstManager.popTemplateRenderInst();
+        renderInstManager.popTemplate();
     }
 
     public draw(globals: dGlobals, renderInstManager: GfxRenderInstManager, viewerInput: ViewerRenderInput): void {
